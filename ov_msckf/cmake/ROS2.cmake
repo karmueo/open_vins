@@ -55,6 +55,7 @@ list(APPEND ament_libraries
 
 list(APPEND LIBRARY_SOURCES
         src/dummy.cpp
+        src/utils/StereoCameraInfo.cpp
         src/sim/Simulator.cpp
         src/state/State.cpp
         src/state/StateHelper.cpp
@@ -98,6 +99,11 @@ ament_target_dependencies(run_simulation ${ament_libraries})
 target_link_libraries(run_simulation ov_msckf_lib ${thirdparty_libraries})
 install(TARGETS run_simulation DESTINATION lib/${PROJECT_NAME})
 
+add_executable(run_stereo_camera_info src/run_stereo_camera_info.cpp)
+ament_target_dependencies(run_stereo_camera_info ${ament_libraries})
+target_link_libraries(run_stereo_camera_info ov_msckf_lib ${thirdparty_libraries})
+install(TARGETS run_stereo_camera_info DESTINATION lib/${PROJECT_NAME})
+
 add_executable(test_sim_meas src/test_sim_meas.cpp)
 ament_target_dependencies(test_sim_meas ${ament_libraries})
 target_link_libraries(test_sim_meas ov_msckf_lib ${thirdparty_libraries})
@@ -107,6 +113,11 @@ add_executable(test_sim_repeat src/test_sim_repeat.cpp)
 ament_target_dependencies(test_sim_repeat ${ament_libraries})
 target_link_libraries(test_sim_repeat ov_msckf_lib ${thirdparty_libraries})
 install(TARGETS test_sim_repeat DESTINATION lib/${PROJECT_NAME})
+
+add_executable(test_stereo_camera_info src/test_stereo_camera_info.cpp)
+ament_target_dependencies(test_stereo_camera_info ${ament_libraries})
+target_link_libraries(test_stereo_camera_info ov_msckf_lib ${thirdparty_libraries})
+install(TARGETS test_stereo_camera_info DESTINATION lib/${PROJECT_NAME})
 
 # Install launch and config directories
 install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch/)
