@@ -30,8 +30,13 @@ launch_args = [
     ),
     DeclareLaunchArgument(
         name="disparity_range",
-        default_value="128",
+        default_value="32",
         description="number of disparities to search, must be a multiple of 16",
+    ),
+    DeclareLaunchArgument(
+        name="sgbm_mode",
+        default_value="2",
+        description="OpenCV StereoSGBM mode: SGBM (0), HH (1), SGBM_3WAY (2), HH4 (3)",
     ),
 ]
 
@@ -104,6 +109,7 @@ def launch_setup(context):
             {"approximate_sync": ParameterValue(LaunchConfiguration("approximate_sync"), value_type=bool)},
             {"stereo_algorithm": ParameterValue(LaunchConfiguration("stereo_algorithm"), value_type=int)},
             {"disparity_range": ParameterValue(LaunchConfiguration("disparity_range"), value_type=int)},
+            {"sgbm_mode": ParameterValue(LaunchConfiguration("sgbm_mode"), value_type=int)},
         ],
         remappings=[
             ("left/image_rect", "left/image_rect"),

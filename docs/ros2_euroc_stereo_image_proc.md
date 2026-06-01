@@ -1,6 +1,6 @@
 # ROS 2 EuRoC 双目 stereo_image_proc 使用说明
 
-本文档说明如何使用本仓库新增的 ROS 2 处理链，对 EuRoC MAV Vicon Room 1 双目 bag 生成矫正图像和视差图。
+本文档说明如何使用本仓库新增的 ROS 2 处理链，对 EuRoC MAV Vicon Room 1 双目 bag 生成矫正图像、视差图和点云。
 
 ## 功能概览
 
@@ -15,18 +15,33 @@ EuRoC 原始 bag 只包含：
 - `/cam0/camera_info`
 - `/cam1/camera_info`
 
-新增 launch 文件 `ov_msckf/launch/euroc_stereo_image_proc.launch.py` 会同时启动：
+CPU 版本 launch 文件 `ov_msckf/launch/euroc_stereo_image_proc.launch.py` 会同时启动：
 
 - `ov_msckf/run_stereo_camera_info`
 - `image_proc/rectify_node`，左目
 - `image_proc/rectify_node`，右目
 - `stereo_image_proc/disparity_node`
 
-输出主题包括：
+CPU 版本输出主题包括：
 
 - `/stereo/left/image_rect`
 - `/stereo/right/image_rect`
 - `/stereo/disparity`
+
+Isaac ROS 版本 launch 文件 `ov_msckf/launch/euroc_isaac_ros_stereo_image_proc.launch.py` 会同时启动：
+
+- `ov_msckf/run_stereo_camera_info`
+- `isaac_ros_image_proc/ImageFormatConverterNode`，左右目 `mono8` 转 `bgr8`
+- `isaac_ros_image_proc/RectifyNode`，左目和右目
+- `isaac_ros_stereo_image_proc/DisparityNode`
+- `isaac_ros_stereo_image_proc/PointCloudNode`
+
+Isaac ROS 版本输出主题包括：
+
+- `/stereo/left/image_rect`
+- `/stereo/right/image_rect`
+- `/stereo/disparity`
+- `/stereo/points2`
 
 ## 前置条件
 
@@ -36,7 +51,7 @@ EuRoC 原始 bag 只包含：
 source /opt/ros/jazzy/setup.bash
 ```
 
-本功能依赖 `third_party/image_pipeline` 子模块，首次拉取仓库或切换分支后请确认子模块存在：
+CPU 版本依赖 `third_party/image_pipeline` 子模块，Isaac ROS 版本依赖 `third_party/isaac_ros_image_pipeline` 子模块。首次拉取仓库或切换分支后请确认子模块存在：
 
 ```bash
 git submodule update --init --recursive
@@ -81,7 +96,51 @@ colcon build --packages-up-to ov_msckf stereo_image_proc \
 source install/setup.bash
 ```
 
+如需使用 Isaac ROS 版本，推荐先安装 NVIDIA 官方二进制包。当前仓库使用 Isaac ROS `release-4.4`，在 x86 Ubuntu 24.04 Noble 上可先配置 Isaac ROS apt 源：
+
+```bash
+k="/usr/share/keyrings/nvidia-isaac-ros.gpg"
+curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key | sudo gpg --dearmor \
+  | sudo tee -a $k > /dev/null
+f="/etc/apt/sources.list.d/nvidia-isaac-ros.list"
+sudo touch $f
+s="deb [signed-by=$k] https://isaac.download.nvidia.com/isaac-ros/release-4.4 noble main"
+grep -qxF "$s" $f || echo "$s" | sudo tee -a $f
+sudo apt-get update
+```
+
+若美国 CDN 访问慢，可把上面的 `https://isaac.download.nvidia.com` 替换为 `https://isaac.download.nvidia.cn`。
+
+然后安装运行包：
+
+```bash
+sudo apt-get install -y ros-jazzy-isaac-ros-image-proc ros-jazzy-isaac-ros-stereo-image-proc
+```
+
+也可以从源码构建 Isaac ROS image pipeline。源码构建同样需要已安装 NVIDIA Isaac ROS 运行依赖：
+
+```bash
+cd /home/scl/work/slam/open_vins
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-up-to ov_msckf isaac_ros_image_proc isaac_ros_stereo_image_proc \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+  -DPython3_EXECUTABLE=/usr/bin/python3 -DPYTHON_EXECUTABLE=/usr/bin/python3
+source install/setup.bash
+```
+
+如果源码构建失败并提示找不到 `vpiConfig.cmake`，说明系统缺少 NVIDIA VPI SDK 或 Isaac ROS 运行依赖；优先使用上面的二进制包安装方式，或按 NVIDIA Isaac ROS 4.4 文档安装 VPI/NITROS/GXF 依赖。
+
+构建后可检查 Isaac ROS 组件是否已进入当前 shell 的 ament index：
+
+```bash
+source install/setup.bash
+ros2 pkg prefix isaac_ros_image_proc
+ros2 pkg prefix isaac_ros_stereo_image_proc
+```
+
 ## 启动处理链
+
+### CPU stereo_image_proc 版本
 
 终端 1：
 
@@ -104,6 +163,35 @@ EuRoC 左右目时间戳同步，因此默认使用精确同步。`stereo_algori
 ```bash
 ros2 launch ov_msckf euroc_stereo_image_proc.launch.py \
   config_path:=/home/scl/work/slam/open_vins/config/euroc_mav/estimator_config.yaml
+```
+
+### Isaac ROS 版本
+
+终端 1：
+
+```bash
+source install/setup.bash
+ros2 launch ov_msckf euroc_isaac_ros_stereo_image_proc.launch.py config:=euroc_mav
+```
+
+默认参数：
+
+- `config:=euroc_mav`
+- `backend:=CUDA`
+- `max_disparity:=128.0`
+- `confidence_threshold:=60000`
+- `use_pointcloud:=true`
+- `use_color:=false`
+- `image_width:=752`
+- `image_height:=480`
+
+EuRoC 图像编码是 `mono8`。Isaac ROS stereo 节点默认协商 `bgr8` 图像格式，因此该 launch 会先把左右原始灰度图转换为 `bgr8`，再送入 Isaac ROS rectification 和 disparity 节点。
+
+如需关闭点云，只验证视差：
+
+```bash
+ros2 launch ov_msckf euroc_isaac_ros_stereo_image_proc.launch.py \
+  config:=euroc_mav use_pointcloud:=false
 ```
 
 ## 播放 EuRoC ROS 2 bag
@@ -150,6 +238,12 @@ ros2 topic list | grep -E '/cam[01]/camera_info|/stereo/.+image_rect|/stereo/dis
 /stereo/left/image_rect
 /stereo/right/image_rect
 /stereo/disparity
+```
+
+若启动的是 Isaac ROS 版本，并且 `use_pointcloud:=true`，还应能看到：
+
+```text
+/stereo/points2
 ```
 
 检查发布频率：
@@ -475,6 +569,28 @@ ros2 run stereo_image_proc point_cloud_node --ros-args \
   -r disparity:=/stereo/disparity \
   -r points2:=/stereo/points2
 ```
+
+### Isaac ROS 组件加载失败
+
+如果启动 Isaac ROS 版本时出现：
+
+```text
+Could not find requested resource in ament index
+Failed to load node 'left_mono_to_bgr8'
+```
+
+说明当前终端没有找到 `isaac_ros_image_proc` 或 `isaac_ros_stereo_image_proc` 的组件注册资源。常见原因是只构建了 `ov_msckf`，没有构建 Isaac ROS 子模块，或者构建后没有重新 source：
+
+```bash
+cd /home/scl/work/slam/open_vins
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-up-to ov_msckf isaac_ros_image_proc isaac_ros_stereo_image_proc \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+  -DPython3_EXECUTABLE=/usr/bin/python3 -DPYTHON_EXECUTABLE=/usr/bin/python3
+source install/setup.bash
+```
+
+若构建失败并提示找不到 `vpiConfig.cmake`，说明系统缺少 NVIDIA VPI SDK 或 Isaac ROS 运行依赖。请先按 NVIDIA Isaac ROS 4.4 环境文档安装 VPI/NITROS/GXF 依赖，再重新构建。
 
 这里必须使用：
 
