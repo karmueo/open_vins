@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.3)
 # Find ROS build system
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(ov_core REQUIRED)
 
 # Describe ROS project
@@ -65,6 +67,11 @@ ament_export_libraries(ov_eval_lib)
 #    add_executable(live_align_trajectory src/live_align_trajectory.cpp)
 #    target_link_libraries(live_align_trajectory ov_eval_lib ${thirdparty_libraries})
 #endif ()
+
+add_executable(live_align_trajectory src/live_align_trajectory_ros2.cpp)
+ament_target_dependencies(live_align_trajectory rclcpp geometry_msgs nav_msgs ov_core)
+target_link_libraries(live_align_trajectory ov_eval_lib ${thirdparty_libraries})
+install(TARGETS live_align_trajectory DESTINATION lib/${PROJECT_NAME})
 
 add_executable(format_converter src/format_converter.cpp)
 ament_target_dependencies(format_converter rclcpp ov_core)

@@ -3,7 +3,7 @@ from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory, get_package_prefix
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 import os
 import sys
 
@@ -16,9 +16,22 @@ launch_args = [
         name="rviz_enable", default_value="false", description="enable rviz node"
     ),
     DeclareLaunchArgument(
+        name="gt_align_enable", default_value="true", description="publish live-aligned groundtruth path"
+    ),
+    DeclareLaunchArgument(
         name="config",
         default_value="euroc_mav",
         description="euroc_mav, tum_vi, rpng_aruco...",
+    ),
+    DeclareLaunchArgument(
+        name="dataset",
+        default_value="V1_01_easy",
+        description="dataset name used to find groundtruth in ov_data/<config>/<dataset>.csv",
+    ),
+    DeclareLaunchArgument(
+        name="path_gt",
+        default_value="",
+        description="path to ASL/EuRoC groundtruth CSV file. If empty, uses ov_data/<config>/<dataset>.csv when available",
     ),
     DeclareLaunchArgument(
         name="config_path",
@@ -64,10 +77,10 @@ launch_args = [
 
 def launch_setup(context):
     config_path = LaunchConfiguration("config_path").perform(context)
+    config = LaunchConfiguration("config").perform(context)
     if not config_path:
         configs_dir = os.path.join(get_package_share_directory("ov_msckf"), "config")
         available_configs = os.listdir(configs_dir)
-        config = LaunchConfiguration("config").perform(context)
         if config in available_configs:
             config_path = os.path.join(
                             get_package_share_directory("ov_msckf"),
@@ -89,6 +102,29 @@ def launch_setup(context):
                         config_path)
                     )
             ]
+    path_gt = LaunchConfiguration("path_gt").perform(context)
+    path_gt_requested = bool(path_gt)
+    if not path_gt:
+        dataset = LaunchConfiguration("dataset").perform(context)
+        try:
+            path_gt = os.path.join(
+                get_package_share_directory("ov_data"),
+                config,
+                dataset + ".csv",
+            )
+        except PackageNotFoundError:
+            path_gt = ""
+    if path_gt and not os.path.isfile(path_gt):
+        if not path_gt_requested:
+            path_gt = ""
+        else:
+            return [
+                LogInfo(
+                    msg="ERROR: path_gt file: '{}' - does not exist. - not starting OpenVINS".format(
+                        path_gt)
+                    )
+            ]
+
     node1 = Node(
         package="ov_msckf",
         executable="run_subscribe_msckf",
@@ -122,7 +158,24 @@ def launch_setup(context):
             ],
     )
 
-    return [node1, node2]
+    nodes = [node1, node2]
+    if path_gt:
+        node3 = Node(
+            package="ov_eval",
+            executable="live_align_trajectory",
+            condition=IfCondition(LaunchConfiguration("gt_align_enable")),
+            output='screen',
+            parameters=[
+                {"verbosity": LaunchConfiguration("verbosity")},
+                {"alignment_type": "posyaw"},
+                {"path_gt": path_gt},
+                {"topic_pathimu": "/ov_msckf/pathimu"},
+                {"topic_pathgt": "/ov_msckf/pathgt"},
+            ],
+        )
+        nodes.append(node3)
+
+    return nodes
 
 
 def generate_launch_description():

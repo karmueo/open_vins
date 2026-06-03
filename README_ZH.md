@@ -22,7 +22,9 @@ bag 中还包含 `/fcu/motor_speed` 等 OpenVINS 不需要的话题。播放时�
 
 当前验证使用 ROS2 Jazzy。由于机器上存在 conda 和 `/usr/local` 下的 OpenCV，构建前建议清理环境变量，避免 CMake 链接到不兼容的库。
 
-在仓库根目录执行：
+### 2.1 清理 shell 环境
+
+在仓库根目录执行下面的环境清理。后续无论是非全量构建还是全量构建，都建议先执行这一段：
 
 ```bash
 cd /home/scl/work/slam/open_vins
@@ -33,17 +35,79 @@ unset LD_LIBRARY_PATH LIBRARY_PATH PYTHONPATH
 unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH
 
 source /opt/ros/jazzy/setup.bash
+```
 
-colcon build --cmake-clean-cache --cmake-args \
-  -DPython3_EXECUTABLE=/usr/bin/python3 \
-  -DPYTHON_EXECUTABLE=/usr/bin/python3 \
-  "-DCMAKE_IGNORE_PREFIX_PATH=/usr/local;/home/ai/anaconda3"
+### 2.2 推荐：只构建 OpenVINS 运行所需包
+
+如果只是运行本文档中的 EuRoC Vicon Room 数据集，不需要全量构建 `third_party/`。推荐只构建 OpenVINS 运行链路需要的包：
+
+```bash
+colcon build --cmake-clean-cache \
+  --packages-up-to ov_data ov_eval ov_msckf \
+  --cmake-args \
+    -DPython3_EXECUTABLE=/usr/bin/python3 \
+    -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+    "-DCMAKE_IGNORE_PREFIX_PATH=/usr/local;/home/ai/anaconda3"
+```
+
+这个命令会构建 `ov_data`、`ov_eval`、`ov_msckf` 以及它们需要的 OpenVINS 依赖包，例如 `ov_core`、`ov_init`。它不会编译 `third_party/image_pipeline` 和 `third_party/isaac_ros_image_pipeline`，因此不会要求安装这些第三方处理链的额外依赖。
+
+### 2.3 可选：全量构建 third_party
+
+只有在需要同时从源码构建 `third_party/image_pipeline` 或 `third_party/isaac_ros_image_pipeline` 时，才使用全量构建。全量构建会扫描仓库内所有 ROS2 包，因此需要额外安装第三方依赖。
+
+先初始化并使用 `rosdep` 安装依赖：
+
+```bash
+sudo apt update
+sudo rosdep init 2>/dev/null || true
+rosdep update
+rosdep install --from-paths . --ignore-src --rosdistro jazzy -y -r
+```
+
+如果 `rosdep` 没有覆盖到本机缺失项，至少需要安装 `image_pipeline` 常见依赖。你遇到的 `camera_info_managerConfig.cmake` 缺失对应下面第一个包：
+
+```bash
+sudo apt install \
+  ros-jazzy-camera-info-manager \
+  ros-jazzy-camera-calibration-parsers \
+  ros-jazzy-cv-bridge \
+  ros-jazzy-image-geometry \
+  ros-jazzy-image-transport \
+  ros-jazzy-message-filters \
+  ros-jazzy-rclcpp-components \
+  ros-jazzy-stereo-msgs \
+  ros-jazzy-tf2-eigen \
+  ros-jazzy-tf2-geometry-msgs \
+  ros-jazzy-tf2-ros \
+  python3-opencv \
+  python3-pytest \
+  python3-requests \
+  python3-semver
+```
+
+如果还要全量构建 Isaac ROS 相关源码包，需要先按 NVIDIA Isaac ROS 4.4 / ROS2 Jazzy 文档安装 VPI、NITROS、GXF、CUDA/CV-CUDA 等依赖。当前仓库内 `third_party/isaac_ros_image_pipeline` 会和 `/opt/ros/jazzy` 下部分 Isaac ROS 包重名；如果确认要覆盖这些 underlay 包，构建时需要显式允许覆盖：
+
+```bash
+colcon build --cmake-clean-cache \
+  --allow-overriding gxf_isaac_tensorops isaac_ros_vpi_utils \
+  --cmake-args \
+    -DPython3_EXECUTABLE=/usr/bin/python3 \
+    -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+    "-DCMAKE_IGNORE_PREFIX_PATH=/usr/local;/home/ai/anaconda3"
+```
+
+如果只是 OpenVINS EuRoC 运行，不建议使用上面的全量构建命令，使用第 2.2 节即可。
+
+构建完成后 source 当前工作区：
+
+```bash
+source install/setup.bash
 ```
 
 构建完成后确认 `ov_msckf` 可执行文件存在：
 
 ```bash
-source install/setup.bash
 ros2 pkg executables ov_msckf
 ```
 
