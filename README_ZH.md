@@ -183,7 +183,7 @@ ros2 topic list | grep /ov_msckf
 
 如果本机有桌面环境，或者已经配置好 SSH X11/Wayland 转发，可以启动 RViz 可视化。推荐先按第 3 节确认无头模式能跑通，再打开 RViz。
 
-终端 1：启动 OpenVINS 和 RViz。
+推荐使用一键 launch 同时启动 OpenVINS、RViz、真值轨迹对齐和 ROS2 bag 回放。
 
 ```bash
 cd /home/scl/work/slam/open_vins
@@ -196,35 +196,59 @@ unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 
-ros2 launch ov_msckf subscribe.launch.py \
-  config:=euroc_mav \
-  verbosity:=INFO \
-  rviz_enable:=true
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  verbosity:=INFO
 ```
 
-终端 2：播放数据。
+该 launch 默认使用下面参数：
+
+- `bag_root:=/mnt/data/slam/vicon_room1_ros2`
+- `config:=euroc_mav`
+- `rviz_enable:=true`
+- `play_bag:=true`
+- `bag_start_delay:=2.0`
+
+如果只想启动 OpenVINS 和 RViz，不在 launch 内播放 bag，可以设置 `play_bag:=false`，再手动播放数据：
+
+```bash
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  verbosity:=INFO \
+  play_bag:=false
+```
+
+另一个终端播放数据：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-
 ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
   --topics /cam0/image_raw /cam1/image_raw /imu0
 ```
 
-RViz 打开后可以观察路径、位姿、特征点等可视化内容。如果远程 SSH 没有配置图形转发，不要使用 `rviz_enable:=true`，否则 RViz 会因为没有显示环境而启动失败。
+RViz 打开后可以观察路径、位姿、特征点等可视化内容。如果远程 SSH 没有配置图形转发，不要使用 `rviz_enable:=true`，否则 RViz 会因为没有显示环境而启动失败。此时可运行：
+
+```bash
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  verbosity:=INFO \
+  rviz_enable:=false
+```
 
 ## 5. 运行其他序列
 
-只需要替换 bag 路径：
+使用一键 launch 时只需要替换 `dataset` 参数：
 
 ```bash
-ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_02_medium \
-  --topics /cam0/image_raw /cam1/image_raw /imu0
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_02_medium \
+  verbosity:=INFO
 ```
 
 ```bash
-ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_03_difficult \
-  --topics /cam0/image_raw /cam1/image_raw /imu0
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_03_difficult \
+  verbosity:=INFO
 ```
 
 ## 6. 快速冒烟测试
