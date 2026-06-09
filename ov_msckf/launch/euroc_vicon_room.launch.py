@@ -102,7 +102,7 @@ def generate_launch_description():
             DeclareLaunchArgument(name="verbosity", default_value="INFO", description="ALL, DEBUG, INFO, WARNING, ERROR, SILENT"),
             DeclareLaunchArgument(name="use_stereo", default_value="true", description="enable stereo feature constraints"),
             DeclareLaunchArgument(name="max_cameras", default_value="2", description="number of cameras"),
-            DeclareLaunchArgument(name="save_total_state", default_value="false", description="save estimated total state to text files"),
+            DeclareLaunchArgument(name="save_total_state", default_value="true", description="save estimated total state to text files"),
             DeclareLaunchArgument(
                 name="filepath_est", default_value="/tmp/ov_estimate.txt", description="estimated total state output path"
             ),
