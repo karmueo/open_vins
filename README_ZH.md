@@ -45,12 +45,48 @@ source /opt/ros/jazzy/setup.bash
 colcon build --cmake-clean-cache \
   --packages-up-to ov_data ov_eval ov_msckf \
   --cmake-args \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DPython3_EXECUTABLE=/usr/bin/python3 \
     -DPYTHON_EXECUTABLE=/usr/bin/python3 \
     "-DCMAKE_IGNORE_PREFIX_PATH=/usr/local;/home/ai/anaconda3"
 ```
 
 这个命令会构建 `ov_data`、`ov_eval`、`ov_msckf` 以及它们需要的 OpenVINS 依赖包，例如 `ov_core`、`ov_init`。它不会编译 `third_party/image_pipeline` 和 `third_party/isaac_ros_image_pipeline`，因此不会要求安装这些第三方处理链的额外依赖。
+
+### 2.2.1 RK3576 板子注意事项
+
+RK3576 板子上的路径和工作站不同：
+
+- 仓库：`/home/sjgd/scl/work/open_vins`
+- ROS2 bag：`/home/sjgd/scl/data/vicon_room1_ros2`
+
+板子上需要额外确认 `image_transport` 已安装，否则 `ov_msckf` 会在 CMake 阶段报找不到 `image_transportConfig.cmake`：
+
+```bash
+apt-get install -y ros-jazzy-image-transport
+```
+
+RK3576 上不要使用默认 colcon 并发。默认包间并发叠加包内 `-j8 -l8`，容易让多个 `cc1plus` 同时占用数 GiB 内存并触发系统内存压力。板子上建议使用低并发：
+
+```bash
+export MAKEFLAGS='-j2 -l2'
+colcon build --executor sequential --parallel-workers 2 \
+  --packages-up-to ov_data ov_eval ov_msckf \
+  --cmake-args \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    -DPython3_EXECUTABLE=/usr/bin/python3 \
+    -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+    "-DCMAKE_IGNORE_PREFIX_PATH=/usr/local"
+```
+
+如果构建过程中板子异常重启，不需要全量删除工作区。只清理中断或失败的包，例如这次只清理：
+
+```bash
+rm -rf build/ov_eval build/ov_init build/ov_msckf \
+       install/ov_eval install/ov_init install/ov_msckf
+```
+
+已经完整安装的 `ov_core`、`ov_data` 可以保留。
 
 ### 2.3 可选：全量构建 third_party
 
@@ -92,6 +128,7 @@ sudo apt install \
 colcon build --cmake-clean-cache \
   --allow-overriding gxf_isaac_tensorops isaac_ros_vpi_utils \
   --cmake-args \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DPython3_EXECUTABLE=/usr/bin/python3 \
     -DPYTHON_EXECUTABLE=/usr/bin/python3 \
     "-DCMAKE_IGNORE_PREFIX_PATH=/usr/local;/home/ai/anaconda3"
@@ -120,70 +157,9 @@ ov_msckf test_sim_meas
 ov_msckf test_sim_repeat
 ```
 
-## 3. SSH 无头远程运行 V1_01_easy
+## 3. 一键运行 V1_01_easy
 
-OpenVINS 算法本身不需要 GUI 桌面。通过 SSH 远程连接服务器时，保持 `rviz_enable:=false` 即可在纯终端环境运行。
-
-打开两个终端。
-
-SSH 终端 1：启动 OpenVINS。
-
-```bash
-cd /home/scl/work/slam/open_vins
-
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER
-unset LD_LIBRARY_PATH LIBRARY_PATH PYTHONPATH
-unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH
-
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
-ros2 launch ov_msckf subscribe.launch.py \
-  config:=euroc_mav \
-  verbosity:=INFO \
-  rviz_enable:=false
-```
-
-SSH 终端 2：播放 ROS2 bag。
-
-```bash
-source /opt/ros/jazzy/setup.bash
-
-ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
-  --topics /cam0/image_raw /cam1/image_raw /imu0
-```
-
-运行正常时，终端 1 会持续输出类似下面的信息：
-
-```text
-[TIME]: ...
-q_GtoI = ...
-p_IinG = ...
-```
-
-SSH 终端 3：检查里程计输出。
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source /home/scl/work/slam/open_vins/install/setup.bash
-
-ros2 topic echo /ov_msckf/odomimu --once
-```
-
-能打印 `nav_msgs/msg/Odometry` 即表示 OpenVINS 已经收到相机和 IMU 数据并发布估计结果。
-
-也可以查看话题列表确认节点正在发布：
-
-```bash
-ros2 topic list | grep /ov_msckf
-```
-
-## 4. 有桌面环境的 RViz 可视化运行
-
-如果本机有桌面环境，或者已经配置好 SSH X11/Wayland 转发，可以启动 RViz 可视化。推荐先按第 3 节确认无头模式能跑通，再打开 RViz。
-
-推荐使用一键 launch 同时启动 OpenVINS、RViz、真值轨迹对齐和 ROS2 bag 回放。
+推荐使用一键 launch 同时启动 OpenVINS、真值轨迹对齐和 ROS2 bag 回放。`euroc_vicon_room.launch.py` 默认不启动 RViz2，适合 SSH 无 GUI 环境。
 
 ```bash
 cd /home/scl/work/slam/open_vins
@@ -199,17 +175,23 @@ source install/setup.bash
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
   verbosity:=INFO
+
+# 如果数据集路径不是默认路径则可以设置 bag 数据根目录
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  verbosity:=INFO \
+  bag_root:=/home/sjgd/scl/data/vicon_room1_ros2
 ```
 
 该 launch 默认使用下面参数：
 
 - `bag_root:=/mnt/data/slam/vicon_room1_ros2`
 - `config:=euroc_mav`
-- `rviz_enable:=true`
+- `rviz_enable:=false`
 - `play_bag:=true`
 - `bag_start_delay:=2.0`
 
-如果只想启动 OpenVINS 和 RViz，不在 launch 内播放 bag，可以设置 `play_bag:=false`，再手动播放数据：
+如果只想启动 OpenVINS，不在 launch 内播放 bag，可以设置 `play_bag:=false`，再手动播放数据：
 
 ```bash
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
@@ -226,16 +208,31 @@ ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
   --topics /cam0/image_raw /cam1/image_raw /imu0
 ```
 
-RViz 打开后可以观察路径、位姿、特征点等可视化内容。如果远程 SSH 没有配置图形转发，不要使用 `rviz_enable:=true`，否则 RViz 会因为没有显示环境而启动失败。此时可运行：
+可另开终端订阅位姿 topic，查看实际发布频率：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+# 里程计发布速度
+ros2 topic hz /ov_msckf/odomimu
+
+# 纯位姿发布
+ros2 topic hz /ov_msckf/poseimu
+```
+
+如果本机有桌面环境，或者已经配置好 SSH X11/Wayland 转发，可以显式打开 RViz2：
 
 ```bash
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
   verbosity:=INFO \
-  rviz_enable:=false
+  rviz_enable:=true
 ```
 
-## 5. 运行其他序列
+RViz2 打开后可以观察路径、位姿、特征点等可视化内容。如果远程 SSH 没有配置图形转发，保持默认 `rviz_enable:=false`。
+
+## 4. 运行其他序列
 
 使用一键 launch 时只需要替换 `dataset` 参数：
 
@@ -251,7 +248,7 @@ ros2 launch ov_msckf euroc_vicon_room.launch.py \
   verbosity:=INFO
 ```
 
-## 6. 快速冒烟测试
+## 5. 快速冒烟测试
 
 限制播放 20 秒：
 
@@ -261,11 +258,11 @@ ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
   --playback-duration 20
 ```
 
-## 7. 和真值定量对比
+## 6. 和真值定量对比
 
 `ros2 topic echo /ov_msckf/odomimu --once` 只能说明系统正在发布估计结果。要判断效果好不好，建议跑完整序列，保存估计轨迹，然后和 EuRoC 真值计算 ATE/RPE。
 
-### 7.1 保存估计轨迹
+### 6.1 保存估计轨迹
 
 终端 1：启动 OpenVINS，并打开 `save_total_state`。
 
@@ -314,9 +311,9 @@ ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
 ls -lh /tmp/ov_estimate.txt /tmp/ov_estimate_std.txt
 ```
 
-如果启动时出现 `boost::filesystem::create_directories: Invalid argument`，说明当前运行的 `ov_msckf` 还是旧构建。重新执行第 2 节的 `colcon build`，然后重新 `source install/setup.bash`。
+如果启动时出现 `boost::filesystem::create_directories: Invalid argument`，说明当前运行的 `ov_msckf` 还是旧构建。重新执行第 2 节带 `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` 的 `colcon build`，然后重新 `source install/setup.bash`。
 
-### 7.2 使用 ov_eval 计算误差
+### 6.2 使用 ov_eval 计算误差
 
 V1_01_easy 的真值文件在：
 
@@ -363,7 +360,7 @@ seg 16 - median_pos = ...
 - `max_pos`：最大位置误差，用来观察是否有局部跑飞。
 - `Relative Pose Error`：固定距离片段上的相对位姿误差，用来观察局部漂移。
 
-### 7.3 其他序列对应真值
+### 6.3 其他序列对应真值
 
 如果评估其他两个 Vicon Room 序列，只替换 bag 路径和真值文件：
 
@@ -389,7 +386,7 @@ ros2 run ov_eval error_singlerun \
 
 每次切换序列或重新从头播放同一序列前，建议先重启 OpenVINS，保证一次 bag 实验对应一次干净的估计器进程。
 
-### 7.4 如何判断结果是否正常
+### 6.4 如何判断结果是否正常
 
 一般看这几项：
 
@@ -398,7 +395,7 @@ ros2 run ov_eval error_singlerun \
 - `error_singlerun` 中 `rmse_pos` 越小越好；如果达到数米甚至更大，通常说明轨迹效果较差、初始化异常、播放流程不干净或配置/依赖环境有问题。
 - V1_01_easy 通常比 V1_03_difficult 更容易，建议先用 V1_01_easy 作为基准。
 
-## 8. 常见问题
+## 7. 常见问题
 
 ### 找不到 `ov_msckf`
 
@@ -434,7 +431,7 @@ ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
 
 ### SSH 下是否需要 GUI
 
-不需要。使用第 3 节的无头运行方式即可。只有使用 RViz 可视化时才需要桌面环境或图形转发。
+不需要。第 3 节的一键 launch 默认 `rviz_enable:=false`，只有显式打开 RViz2 时才需要桌面环境或图形转发。
 
 ### SSH 下想看 RViz
 

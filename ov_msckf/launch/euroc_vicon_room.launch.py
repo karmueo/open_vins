@@ -1,4 +1,4 @@
-"""一键启动 OpenVINS EuRoC Vicon Room 回放、VIO、真值对齐和 RViz2 可视化。"""
+"""一键启动 OpenVINS EuRoC Vicon Room 回放、VIO、真值对齐和可选 RViz2 可视化。"""
 
 import os
 
@@ -20,7 +20,7 @@ def launch_setup(context):
     bag_path = os.path.join(bag_root, dataset)
     # 是否让 rosbag2 发布 /clock。
     use_clock = LaunchConfiguration("use_clock").perform(context).lower() == "true"
-    # bag 回放启动延迟，给 VIO/RViz 节点留出订阅初始化时间。
+    # bag 回放启动延迟，给 VIO/RViz2 节点留出订阅初始化时间。
     bag_start_delay = float(LaunchConfiguration("bag_start_delay").perform(context))
     # ov_msckf 包共享目录。
     package_share = get_package_share_directory("ov_msckf")
@@ -30,7 +30,7 @@ def launch_setup(context):
     if not os.path.isdir(bag_path):
         return [LogInfo(msg=f"ERROR: bag path does not exist: {bag_path} - not starting EuRoC Vicon Room launch")]
 
-    # 传给 subscribe.launch.py 的 OpenVINS/RViz/真值对齐参数。
+    # 传给 subscribe.launch.py 的 OpenVINS/RViz2/真值对齐参数。
     subscribe_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(subscribe_launch_path),
         launch_arguments={
@@ -94,7 +94,7 @@ def generate_launch_description():
             DeclareLaunchArgument(name="use_clock", default_value="false", description="publish /clock from rosbag2 playback"),
             DeclareLaunchArgument(name="namespace", default_value="ov_msckf", description="OpenVINS namespace"),
             DeclareLaunchArgument(name="ov_enable", default_value="true", description="enable OpenVINS node"),
-            DeclareLaunchArgument(name="rviz_enable", default_value="true", description="enable RViz2 node"),
+            DeclareLaunchArgument(name="rviz_enable", default_value="false", description="enable RViz2 node"),
             DeclareLaunchArgument(name="gt_align_enable", default_value="true", description="publish live-aligned groundtruth path"),
             DeclareLaunchArgument(name="config", default_value="euroc_mav", description="OpenVINS config directory name"),
             DeclareLaunchArgument(name="path_gt", default_value="", description="optional path to ASL/EuRoC groundtruth CSV file"),
