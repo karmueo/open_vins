@@ -78,7 +78,7 @@ public:
    * @brief Feed function for camera measurements
    * @param message Contains our timestamp, images, and camera ids
    */
-  void feed_measurement_camera(const ov_core::CameraData &message) { track_image_and_update(message); }
+  void feed_measurement_camera(const ov_core::CameraData &message);
 
   /**
    * @brief Feed function for a synchronized simulated cameras
@@ -107,8 +107,14 @@ public:
   /// Accessor to get the current state
   std::shared_ptr<State> get_state() { return state; }
 
+  /// Mutex protecting state/cache accesses shared by update and fast propagation
+  std::mutex &get_state_mutex() { return state_mtx; }
+
   /// Accessor to get the current propagator
   std::shared_ptr<Propagator> get_propagator() { return propagator; }
+
+  /// Current camera-to-IMU time offset estimate
+  double get_camera_to_imu_timeoffset();
 
   /// Get a nice visualization image of what tracks we have
   cv::Mat get_historical_viz_image();
@@ -181,6 +187,9 @@ protected:
 
   /// Our master state object :D
   std::shared_ptr<State> state;
+
+  /// Guards state and propagation cache access across ROS callbacks
+  std::mutex state_mtx;
 
   /// Propagator of our state
   std::shared_ptr<Propagator> propagator;

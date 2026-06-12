@@ -159,24 +159,36 @@ ov_msckf test_sim_repeat
 
 ## 3. 一键运行 V1_01_easy
 
-推荐使用一键 launch 同时启动 OpenVINS、真值轨迹对齐和 ROS2 bag 回放。`euroc_vicon_room.launch.py` 默认不启动 RViz2，适合 SSH 无 GUI 环境。
+推荐使用一键 launch 同时启动 OpenVINS 和 ROS2 bag 回放。`euroc_vicon_room.launch.py` 默认使用 RK3576 实时 profile，不启动 RViz2，但会启动实时真值轨迹对齐、保存完整状态文件，并发布 IMU 和相机相关 TF。
 
 ```bash
+# 进入 OpenVINS 工作区根目录。
 cd /home/scl/work/slam/open_vins
 
+# 使用系统默认工具链，避免 conda 或 /usr/local 中的库影响 ROS2/CMake 运行。
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# 清理 conda 环境变量，避免 Python、OpenCV、Ceres、Boost 等依赖解析到 conda 环境。
 unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER
+
+# 清理动态库、Python 包和 ROS/CMake 前缀路径，避免混入旧工作区或非系统依赖。
 unset LD_LIBRARY_PATH LIBRARY_PATH PYTHONPATH
 unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH
 
+# 加载系统 ROS2 Jazzy 环境。
 source /opt/ros/jazzy/setup.bash
+
+# 加载当前 OpenVINS 工作区安装结果。
 source install/setup.bash
 
+# dataset：选择要运行的 EuRoC Vicon Room 序列。
+# verbosity：日志等级；默认 WARNING，调试时可临时设为 INFO。
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
   verbosity:=INFO
 
-# 如果数据集路径不是默认路径则可以设置 bag 数据根目录
+# 如果数据集路径不是默认路径，则显式设置 bag_root。
+# bag_root：ROS2 bag 根目录；launch 会自动拼接 dataset 得到具体 bag 路径。
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
   verbosity:=INFO \
@@ -185,11 +197,34 @@ ros2 launch ov_msckf euroc_vicon_room.launch.py \
 
 该 launch 默认使用下面参数：
 
-- `bag_root:=/mnt/data/slam/vicon_room1_ros2`
-- `config:=euroc_mav`
-- `rviz_enable:=false`
-- `play_bag:=true`
-- `bag_start_delay:=2.0`
+- `dataset:=V1_01_easy`：要运行的 EuRoC Vicon Room 序列名，可替换为 `V1_02_medium` 或 `V1_03_difficult`。
+- `bag_root:=/mnt/data/slam/vicon_room1_ros2`：ROS2 bag 根目录；如果板端数据在 `/home/sjgd/scl/data/vicon_room1_ros2`，需要手动覆盖。
+- `config:=euroc_mav`：使用 EuRoC MAV 相机、IMU 和真值配置目录。
+- `config_path:=<ov_msckf share>/config/euroc_mav/estimator_config_rk3576.yaml`：默认使用 RK3576 实时 profile。
+- `rviz_enable:=false`：默认不启动 RViz2，降低板端和 SSH 无 GUI 环境负载。
+- `gt_align_enable:=true`：默认启动实时真值轨迹对齐节点，用于在线观察估计轨迹和真值轨迹的对齐效果。
+- `save_total_state:=true`：默认保存完整状态文件，便于后续转换轨迹并做 ATE/RPE 评估。
+- `verbosity:=WARNING`：默认只输出 warning 及以上日志；排查时可改为 `INFO`。
+- `publish_global_to_imu_tf:=true`：默认发布 `global -> imu` TF，方便 RViz2、TF 工具和下游节点使用。
+- `publish_calibration_tf:=true`：默认发布 `imu -> cam` 标定 TF，方便可视化和下游感知链路使用。
+- `play_bag:=true`：默认由 launch 自动播放 bag；若要手动播放则设为 `false`。
+- `bag_start_delay:=2.0`：OpenVINS 启动后等待 2 秒再播放 bag，降低启动瞬间丢首帧概率。
+
+下面这些调参项默认不由 `euroc_vicon_room.launch.py` 覆盖，而是直接读取 `estimator_config_rk3576.yaml`；只有在命令行显式传入同名参数时才会覆盖 YAML。RK3576 profile 主要通过这些参数降低前端和 EKF 更新负载：
+
+- `downsample_cameras:=true`：相机图像降采样到一半分辨率，显著降低 KLT 跟踪开销。
+- `num_pts:=120`：每帧前端跟踪特征数量上限，低于原始 EuRoC 默认值。
+- `track_frequency:=15.0`：相机更新目标频率，`/ov_msckf/poseimu` 应接近 14-15 Hz。
+- `histogram_method:=NONE`：关闭直方图预处理，减少图像前处理开销。
+- `num_opencv_threads:=2`：限制 OpenCV 线程数，避免板端线程过多导致调度抖动。
+- `max_slam:=20`：限制状态中的 SLAM 特征数量，降低 EKF 状态维度。
+- `max_msckf_in_update:=25`：限制每次 MSCKF 更新使用的特征数量，降低单帧更新时间。
+- `calib_cam_extrinsics:=false`：固定 EuRoC 相机外参，不在线估计。
+- `calib_cam_intrinsics:=false`：固定 EuRoC 相机内参，不在线估计。
+- `calib_cam_timeoffset:=false`：固定相机-IMU 时间偏移，不在线估计。
+- `executor_threads:=2`：ROS2 executor 使用 2 个线程，兼顾 IMU 回调和相机 worker。
+- `max_camera_queue:=4`：相机处理队列最多保留 4 帧，避免延迟无限积累。
+- `drop_stale_camera_frames:=true`：队列积压时丢弃旧相机帧，优先保持实时性。
 
 如果只想启动 OpenVINS，不在 launch 内播放 bag，可以设置 `play_bag:=false`，再手动播放数据：
 
@@ -257,6 +292,31 @@ ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
   --topics /cam0/image_raw /cam1/image_raw /imu0 \
   --playback-duration 20
 ```
+
+板端实时性排查时建议两个序列使用完全相同参数，并关闭额外负载：
+
+```bash
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  rviz_enable:=false \
+  gt_align_enable:=false \
+  save_total_state:=false \
+  publish_global_to_imu_tf:=false \
+  publish_calibration_tf:=false \
+  verbosity:=WARNING
+```
+
+另开终端记录输入和输出 topic 频率：
+
+```bash
+ros2 topic hz /imu0
+ros2 topic hz /cam0/image_raw
+ros2 topic hz /cam1/image_raw
+ros2 topic hz /ov_msckf/odomimu
+ros2 topic hz /ov_msckf/poseimu
+```
+
+RK3576 profile 下，`/ov_msckf/odomimu` 应尽量接近输入 IMU 频率，目标至少稳定在 180 Hz 左右；`/ov_msckf/poseimu` 应接近 `track_frequency`，即约 14-15 Hz。日志中的 `ms behind` 不应随运行时间持续增长。如果 `V1_01_easy` 和 `V1_02_medium` 的发布频率差异明显，优先排查实时性、队列积压和板端调度，而不是直接比较轨迹误差。
 
 ## 6. 和真值定量对比
 
@@ -336,7 +396,7 @@ source /home/scl/work/slam/open_vins/install/setup.bash
 
 ros2 run ov_eval error_singlerun \
   posyaw \
-  /home/scl/work/slam/open_vins/ov_data/euroc_mav/V1_01_easy.txt \
+  ./ov_data/euroc_mav/V1_01_easy.txt \
   /tmp/ov_estimate_eval.txt
 ```
 

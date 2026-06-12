@@ -58,6 +58,23 @@ launch_args = [
         default_value="false",
         description="record the total state with calibration and features to a txt file",
     ),
+    DeclareLaunchArgument(name="downsample_cameras", default_value="", description="optional override for camera downsampling"),
+    DeclareLaunchArgument(name="num_pts", default_value="", description="optional override for frontend feature count"),
+    DeclareLaunchArgument(name="track_frequency", default_value="", description="optional override for tracking frequency"),
+    DeclareLaunchArgument(name="histogram_method", default_value="", description="optional override for image histogram preprocessing"),
+    DeclareLaunchArgument(name="num_opencv_threads", default_value="", description="optional override for OpenCV thread count"),
+    DeclareLaunchArgument(name="max_slam", default_value="", description="optional override for max SLAM features"),
+    DeclareLaunchArgument(name="max_msckf_in_update", default_value="", description="optional override for MSCKF update feature cap"),
+    DeclareLaunchArgument(name="calib_cam_extrinsics", default_value="", description="optional override for camera extrinsic calibration"),
+    DeclareLaunchArgument(name="calib_cam_intrinsics", default_value="", description="optional override for camera intrinsic calibration"),
+    DeclareLaunchArgument(name="calib_cam_timeoffset", default_value="", description="optional override for camera-IMU time calibration"),
+    DeclareLaunchArgument(name="record_timing_information", default_value="", description="optional override for timing file recording"),
+    DeclareLaunchArgument(name="publish_global_to_imu_tf", default_value="", description="optional override for global to IMU TF publishing"),
+    DeclareLaunchArgument(name="publish_calibration_tf", default_value="", description="optional override for calibration TF publishing"),
+    DeclareLaunchArgument(name="multi_threading_subs", default_value="", description="optional override for async subscriber processing"),
+    DeclareLaunchArgument(name="executor_threads", default_value="", description="optional override for ROS2 executor threads"),
+    DeclareLaunchArgument(name="max_camera_queue", default_value="", description="optional override for camera backlog limit"),
+    DeclareLaunchArgument(name="drop_stale_camera_frames", default_value="", description="optional override for stale camera frame dropping"),
     DeclareLaunchArgument(
         name="filepath_est",
         default_value="/tmp/ov_estimate.txt",
@@ -125,22 +142,46 @@ def launch_setup(context):
                     )
             ]
 
+    optional_node_params = {
+        "downsample_cameras": LaunchConfiguration("downsample_cameras"),
+        "num_pts": LaunchConfiguration("num_pts"),
+        "track_frequency": LaunchConfiguration("track_frequency"),
+        "histogram_method": LaunchConfiguration("histogram_method"),
+        "num_opencv_threads": LaunchConfiguration("num_opencv_threads"),
+        "max_slam": LaunchConfiguration("max_slam"),
+        "max_msckf_in_update": LaunchConfiguration("max_msckf_in_update"),
+        "calib_cam_extrinsics": LaunchConfiguration("calib_cam_extrinsics"),
+        "calib_cam_intrinsics": LaunchConfiguration("calib_cam_intrinsics"),
+        "calib_cam_timeoffset": LaunchConfiguration("calib_cam_timeoffset"),
+        "record_timing_information": LaunchConfiguration("record_timing_information"),
+        "publish_global_to_imu_tf": LaunchConfiguration("publish_global_to_imu_tf"),
+        "publish_calibration_tf": LaunchConfiguration("publish_calibration_tf"),
+        "multi_threading_subs": LaunchConfiguration("multi_threading_subs"),
+        "executor_threads": LaunchConfiguration("executor_threads"),
+        "max_camera_queue": LaunchConfiguration("max_camera_queue"),
+        "drop_stale_camera_frames": LaunchConfiguration("drop_stale_camera_frames"),
+    }
+    node_params = [
+        {"verbosity": LaunchConfiguration("verbosity")},
+        {"use_stereo": LaunchConfiguration("use_stereo")},
+        {"max_cameras": LaunchConfiguration("max_cameras")},
+        {"save_total_state": LaunchConfiguration("save_total_state")},
+        {"filepath_est": LaunchConfiguration("filepath_est")},
+        {"filepath_std": LaunchConfiguration("filepath_std")},
+        {"filepath_gt": LaunchConfiguration("filepath_gt")},
+        {"config_path": config_path},
+    ]
+    for param_name, launch_config in optional_node_params.items():
+        if launch_config.perform(context) != "":
+            node_params.append({param_name: launch_config})
+
     node1 = Node(
         package="ov_msckf",
         executable="run_subscribe_msckf",
         condition=IfCondition(LaunchConfiguration("ov_enable")),
         namespace=LaunchConfiguration("namespace"),
         output='screen',
-        parameters=[
-            {"verbosity": LaunchConfiguration("verbosity")},
-            {"use_stereo": LaunchConfiguration("use_stereo")},
-            {"max_cameras": LaunchConfiguration("max_cameras")},
-            {"save_total_state": LaunchConfiguration("save_total_state")},
-            {"filepath_est": LaunchConfiguration("filepath_est")},
-            {"filepath_std": LaunchConfiguration("filepath_std")},
-            {"filepath_gt": LaunchConfiguration("filepath_gt")},
-            {"config_path": config_path},
-        ],
+        parameters=node_params,
     )
 
     node2 = Node(

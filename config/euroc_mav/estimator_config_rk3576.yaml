@@ -1,0 +1,119 @@
+%YAML:1.0 # 必须在文件顶部指定 OpenCV YAML 文件类型
+
+verbosity: "WARNING" # 日志等级：ALL、DEBUG、INFO、WARNING、ERROR、SILENT
+
+use_fej: true # 是否使用一阶估计雅可比，通常开启可获得更好一致性
+integration: "rk4" # IMU 积分方式：discrete、rk4、analytical；rk4/analytical 会使用解析协方差传播
+use_stereo: true # 多相机时是否使用双目约束；true 表示按双目跟踪
+max_cameras: 2 # 相机数量：1=单目，2=双目，>2=多单目跟踪
+
+calib_cam_extrinsics: false # RK3576 实时配置固定 EuRoC 相机外参，不在线估计
+calib_cam_intrinsics: false # RK3576 实时配置固定 EuRoC 相机内参，不在线估计
+calib_cam_timeoffset: false # RK3576 实时配置固定相机-IMU 时间偏移，不在线估计
+calib_imu_intrinsics: false # 是否在线估计 IMU 内参，包括旋转和斜交-尺度矩阵
+calib_imu_g_sensitivity: false # 是否在线估计陀螺仪重力敏感项 Tg
+
+max_clones: 11 # 滑动窗口中保留的 IMU clone 数量
+max_slam: 20 # 状态向量中最多保留的 SLAM 特征数量
+max_slam_in_update: 25 # SLAM 更新可分批顺序执行；这里设置每批最多特征数
+max_msckf_in_update: 25 # 每次 MSCKF 更新最多使用的特征数
+dt_slam_delay: 1 # 初始化 SLAM 特征前的延迟时间，有助于避免早期不稳定初始化
+
+gravity_mag: 9.81 # 当前地点重力加速度大小
+
+feat_rep_msckf: "GLOBAL_3D"
+feat_rep_slam: "ANCHORED_MSCKF_INVERSE_DEPTH"
+feat_rep_aruco: "ANCHORED_MSCKF_INVERSE_DEPTH"
+
+# 零速更新参数
+# 支持基于 IMU 的检测，也支持基于图像视差的检测
+try_zupt: false
+zupt_chi2_multipler: 0 # 设为 0 表示只使用视差检测
+zupt_max_velocity: 0.1
+zupt_noise_multiplier: 10
+zupt_max_disparity: 0.5 # 设为 0 表示只使用 IMU 检测
+zupt_only_at_beginning: false
+
+# ==================================================================
+# ==================================================================
+
+init_window_time: 2.0 # 初始化阶段收集数据的时间窗口，单位秒
+init_imu_thresh: 1.5 # 用于检测运动 jerk 的加速度方差阈值
+init_max_disparity: 10.0 # 判定平台静止时允许的最大视差，和图像分辨率有关
+init_max_features: 50 # 初始化阶段跟踪的特征数量，较小可节省计算量
+
+init_dyn_use: false # 是否使用动态初始化
+init_dyn_mle_opt_calib: false # 初始化期间是否优化标定参数，通常不建议开启
+init_dyn_mle_max_iter: 50 # MLE 精化最大迭代次数；设为 0 表示跳过 MLE
+init_dyn_mle_max_time: 0.05 # MLE 精化允许的最大耗时，单位秒
+init_dyn_mle_max_threads: 2 # MLE 精化使用的线程数
+init_dyn_num_pose: 6 # 初始化窗口内使用的位姿数量，按时间均匀采样
+init_dyn_min_deg: 10.0 # 尝试动态初始化所需的最小姿态变化，单位度
+
+init_dyn_inflation_ori: 10 # 恢复出的 q_GtoI 协方差膨胀倍数
+init_dyn_inflation_vel: 100 # 恢复出的 v_IinG 协方差膨胀倍数
+init_dyn_inflation_bg: 10 # 恢复出的陀螺仪 bias 协方差膨胀倍数
+init_dyn_inflation_ba: 100 # 恢复出的加速度计 bias 协方差膨胀倍数
+init_dyn_min_rec_cond: 1e-12 # 信息矩阵求逆时的倒条件数阈值
+
+init_dyn_bias_g: [ 0.0, 0.0, 0.0 ] # 陀螺仪 bias 初值
+init_dyn_bias_a: [ 0.0, 0.0, 0.0 ] # 加速度计 bias 初值
+
+# ==================================================================
+# ==================================================================
+
+record_timing_information: false # 是否记录 OpenVINS 各阶段耗时
+record_timing_filepath: "/tmp/traj_timing.txt" # timing 文件保存路径，参考 https://docs.openvins.com/eval-timing.html#eval-ov-timing-flame
+
+# 是否保存完整状态及其对角协方差
+# 仿真评估时可配合 ov_eval error_simulation 使用
+save_total_state: true
+filepath_est: "/tmp/ov_estimate.txt"
+filepath_std: "/tmp/ov_estimate_std.txt"
+filepath_gt: "/tmp/ov_groundtruth.txt"
+
+# ==================================================================
+# ==================================================================
+
+# 前端特征跟踪参数
+# 支持 KLT 和描述子两种方式；KLT 路径实现更成熟
+use_klt: true # true 表示使用 KLT；false 表示使用 ORB 描述子和鲁棒匹配
+num_pts: 200 # 每帧每相机提取并跟踪的特征点数量
+fast_threshold: 20 # FAST 角点提取阈值；阈值越低通常计算越重
+grid_x: 5 # 水平方向特征提取网格数量，用于均匀分布特征
+grid_y: 5 # 垂直方向特征提取网格数量，用于均匀分布特征
+min_px_dist: 10 # 特征点最小像素间距；过近特征提供的信息较少
+knn_ratio: 0.70 # 描述子匹配时前两个最近邻距离比阈值
+track_frequency: 21.0 # 特征跟踪目标频率，单位 Hz
+downsample_cameras: true # 是否将相机图像下采样到一半分辨率
+num_opencv_threads: 2 # OpenCV 线程数：-1=自动，0/1=串行，>1=指定线程数
+histogram_method: "NONE" # NONE, HISTOGRAM, CLAHE
+multi_threading_subs: true # 是否使用常驻 ROS2 相机 worker 线程处理相机队列
+executor_threads: 2 # ROS2 MultiThreadedExecutor 工作线程数量
+max_camera_queue: 4 # 嵌入式平台上允许积压的最大相机帧数
+drop_stale_camera_frames: true # 相机处理落后时是否丢弃最旧帧以保持实时性
+
+# ArUco 标签跟踪参数
+# DICT_6X6_1000 可从 https://chev.me/arucogen/ 生成
+use_aruco: false
+num_aruco: 1024
+downsize_aruco: true
+
+# ==================================================================
+# ==================================================================
+
+# 相机观测噪声和卡方阈值倍率
+up_msckf_sigma_px: 1
+up_msckf_chi2_multipler: 1
+up_slam_sigma_px: 1
+up_slam_chi2_multipler: 1
+up_aruco_sigma_px: 1
+up_aruco_chi2_multipler: 1
+
+# 图像 mask 配置
+use_mask: false
+
+# IMU 和相机的空间-时间标定文件
+# IMU 配置文件中也应包含正确的噪声参数
+relative_config_imu: "kalibr_imu_chain.yaml"
+relative_config_imucam: "kalibr_imucam_chain.yaml"

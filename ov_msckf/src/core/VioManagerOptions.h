@@ -417,6 +417,12 @@ struct VioManagerOptions {
   /// If our ROS subscriber callbacks should be async (if sim and serial then this should be no!)
   bool use_multi_threading_subs = false;
 
+  /// Maximum camera measurements allowed to queue before backpressure is applied (0 disables)
+  int max_camera_queue = 0;
+
+  /// If enabled, drop the oldest queued camera measurements once max_camera_queue is exceeded
+  bool drop_stale_camera_frames = false;
+
   /// The number of points we should extract and track in *each* image frame. This highly effects the computation required for tracking.
   int num_pts = 150;
 
@@ -460,6 +466,8 @@ struct VioManagerOptions {
       parser->parse_config("num_opencv_threads", num_opencv_threads);
       parser->parse_config("multi_threading_pubs", use_multi_threading_pubs, false);
       parser->parse_config("multi_threading_subs", use_multi_threading_subs, false);
+      parser->parse_config("max_camera_queue", max_camera_queue, false);
+      parser->parse_config("drop_stale_camera_frames", drop_stale_camera_frames, false);
       parser->parse_config("num_pts", num_pts);
       parser->parse_config("fast_threshold", fast_threshold);
       parser->parse_config("grid_x", grid_x);
@@ -492,6 +500,8 @@ struct VioManagerOptions {
     PRINT_DEBUG("  - num opencv threads: %d\n", num_opencv_threads);
     PRINT_DEBUG("  - use multi-threading pubs: %d\n", use_multi_threading_pubs);
     PRINT_DEBUG("  - use multi-threading subs: %d\n", use_multi_threading_subs);
+    PRINT_DEBUG("  - max camera queue: %d\n", max_camera_queue);
+    PRINT_DEBUG("  - drop stale camera frames: %d\n", drop_stale_camera_frames);
     PRINT_DEBUG("  - num_pts: %d\n", num_pts);
     PRINT_DEBUG("  - fast threshold: %d\n", fast_threshold);
     PRINT_DEBUG("  - grid X by Y: %d by %d\n", grid_x, grid_y);

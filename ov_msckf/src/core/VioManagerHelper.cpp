@@ -39,6 +39,8 @@ using namespace ov_msckf;
 
 void VioManager::initialize_with_gt(Eigen::Matrix<double, 17, 1> imustate) {
 
+  std::lock_guard<std::mutex> lck(state_mtx);
+
   // Initialize the system
   state->_imu->set_value(imustate.block(1, 0, 16, 1));
   state->_imu->set_fej(imustate.block(1, 0, 16, 1));

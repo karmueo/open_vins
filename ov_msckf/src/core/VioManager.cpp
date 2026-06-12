@@ -165,6 +165,8 @@ VioManager::VioManager(VioManagerOptions &params_) : thread_init_running(false),
 
 void VioManager::feed_measurement_imu(const ov_core::ImuData &message) {
 
+  std::lock_guard<std::mutex> lck(state_mtx);
+
   // The oldest time we need IMU with is the last clone
   // We shouldn't really need the whole window, but if we go backwards in time we will
   double oldest_time = state->margtimestep();
@@ -188,8 +190,20 @@ void VioManager::feed_measurement_imu(const ov_core::ImuData &message) {
   }
 }
 
+void VioManager::feed_measurement_camera(const ov_core::CameraData &message) {
+  std::lock_guard<std::mutex> lck(state_mtx);
+  track_image_and_update(message);
+}
+
+double VioManager::get_camera_to_imu_timeoffset() {
+  std::lock_guard<std::mutex> lck(state_mtx);
+  return state->_calib_dt_CAMtoIMU->value()(0);
+}
+
 void VioManager::feed_measurement_simulation(double timestamp, const std::vector<int> &camids,
                                              const std::vector<std::vector<std::pair<size_t, Eigen::VectorXf>>> &feats) {
+
+  std::lock_guard<std::mutex> lck(state_mtx);
 
   // Start timing
   rT1 = boost::posix_time::microsec_clock::local_time();

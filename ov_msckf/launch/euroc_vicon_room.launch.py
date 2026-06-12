@@ -26,6 +26,10 @@ def launch_setup(context):
     package_share = get_package_share_directory("ov_msckf")
     # 被复用的通用订阅 launch 文件路径。
     subscribe_launch_path = os.path.join(package_share, "launch", "subscribe.launch.py")
+    # 默认使用 RK3576 实时 profile；显式 config_path 会覆盖该默认值。
+    config_path = LaunchConfiguration("config_path").perform(context)
+    if not config_path:
+        config_path = os.path.join(package_share, "config", "euroc_mav", "estimator_config_rk3576.yaml")
 
     if not os.path.isdir(bag_path):
         return [LogInfo(msg=f"ERROR: bag path does not exist: {bag_path} - not starting EuRoC Vicon Room launch")]
@@ -41,11 +45,28 @@ def launch_setup(context):
             "config": LaunchConfiguration("config"),
             "dataset": LaunchConfiguration("dataset"),
             "path_gt": LaunchConfiguration("path_gt"),
-            "config_path": LaunchConfiguration("config_path"),
+            "config_path": config_path,
             "verbosity": LaunchConfiguration("verbosity"),
             "use_stereo": LaunchConfiguration("use_stereo"),
             "max_cameras": LaunchConfiguration("max_cameras"),
             "save_total_state": LaunchConfiguration("save_total_state"),
+            "downsample_cameras": LaunchConfiguration("downsample_cameras"),
+            "num_pts": LaunchConfiguration("num_pts"),
+            "track_frequency": LaunchConfiguration("track_frequency"),
+            "histogram_method": LaunchConfiguration("histogram_method"),
+            "num_opencv_threads": LaunchConfiguration("num_opencv_threads"),
+            "max_slam": LaunchConfiguration("max_slam"),
+            "max_msckf_in_update": LaunchConfiguration("max_msckf_in_update"),
+            "calib_cam_extrinsics": LaunchConfiguration("calib_cam_extrinsics"),
+            "calib_cam_intrinsics": LaunchConfiguration("calib_cam_intrinsics"),
+            "calib_cam_timeoffset": LaunchConfiguration("calib_cam_timeoffset"),
+            "record_timing_information": LaunchConfiguration("record_timing_information"),
+            "publish_global_to_imu_tf": LaunchConfiguration("publish_global_to_imu_tf"),
+            "publish_calibration_tf": LaunchConfiguration("publish_calibration_tf"),
+            "multi_threading_subs": LaunchConfiguration("multi_threading_subs"),
+            "executor_threads": LaunchConfiguration("executor_threads"),
+            "max_camera_queue": LaunchConfiguration("max_camera_queue"),
+            "drop_stale_camera_frames": LaunchConfiguration("drop_stale_camera_frames"),
             "filepath_est": LaunchConfiguration("filepath_est"),
             "filepath_std": LaunchConfiguration("filepath_std"),
             "filepath_gt": LaunchConfiguration("filepath_gt"),
@@ -99,10 +120,27 @@ def generate_launch_description():
             DeclareLaunchArgument(name="config", default_value="euroc_mav", description="OpenVINS config directory name"),
             DeclareLaunchArgument(name="path_gt", default_value="", description="optional path to ASL/EuRoC groundtruth CSV file"),
             DeclareLaunchArgument(name="config_path", default_value="", description="optional path to estimator_config.yaml"),
-            DeclareLaunchArgument(name="verbosity", default_value="INFO", description="ALL, DEBUG, INFO, WARNING, ERROR, SILENT"),
+            DeclareLaunchArgument(name="verbosity", default_value="WARNING", description="ALL, DEBUG, INFO, WARNING, ERROR, SILENT"),
             DeclareLaunchArgument(name="use_stereo", default_value="true", description="enable stereo feature constraints"),
             DeclareLaunchArgument(name="max_cameras", default_value="2", description="number of cameras"),
             DeclareLaunchArgument(name="save_total_state", default_value="true", description="save estimated total state to text files"),
+            DeclareLaunchArgument(name="downsample_cameras", default_value="", description="optional override for camera downsampling"),
+            DeclareLaunchArgument(name="num_pts", default_value="", description="optional override for frontend feature count"),
+            DeclareLaunchArgument(name="track_frequency", default_value="", description="optional override for feature tracking frequency"),
+            DeclareLaunchArgument(name="histogram_method", default_value="", description="optional override for image histogram preprocessing"),
+            DeclareLaunchArgument(name="num_opencv_threads", default_value="", description="optional override for OpenCV thread count"),
+            DeclareLaunchArgument(name="max_slam", default_value="", description="optional override for maximum SLAM features in state"),
+            DeclareLaunchArgument(name="max_msckf_in_update", default_value="", description="optional override for MSCKF update feature cap"),
+            DeclareLaunchArgument(name="calib_cam_extrinsics", default_value="", description="optional override for camera extrinsics calibration"),
+            DeclareLaunchArgument(name="calib_cam_intrinsics", default_value="", description="optional override for camera intrinsics calibration"),
+            DeclareLaunchArgument(name="calib_cam_timeoffset", default_value="", description="optional override for camera-IMU time calibration"),
+            DeclareLaunchArgument(name="record_timing_information", default_value="", description="optional override for timing file recording"),
+            DeclareLaunchArgument(name="publish_global_to_imu_tf", default_value="true", description="publish global to IMU TF"),
+            DeclareLaunchArgument(name="publish_calibration_tf", default_value="true", description="publish IMU to camera TF"),
+            DeclareLaunchArgument(name="multi_threading_subs", default_value="", description="optional override for async subscriber processing"),
+            DeclareLaunchArgument(name="executor_threads", default_value="", description="optional override for ROS2 executor thread count"),
+            DeclareLaunchArgument(name="max_camera_queue", default_value="", description="optional override for maximum queued camera frames"),
+            DeclareLaunchArgument(name="drop_stale_camera_frames", default_value="", description="optional override for stale camera frame dropping"),
             DeclareLaunchArgument(
                 name="filepath_est", default_value="/tmp/ov_estimate.txt", description="estimated total state output path"
             ),

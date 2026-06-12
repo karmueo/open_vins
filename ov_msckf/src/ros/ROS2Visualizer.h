@@ -54,9 +54,13 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <thread>
 
 #include <Eigen/Eigen>
 #include <boost/date_time/posix_time/posix_time.hpp>
@@ -97,6 +101,9 @@ public:
    * @param sim Simulator if we are simulating
    */
   ROS2Visualizer(std::shared_ptr<rclcpp::Node> node, std::shared_ptr<VioManager> app, std::shared_ptr<Simulator> sim = nullptr);
+
+  /// Stop background workers
+  ~ROS2Visualizer();
 
   /**
    * @brief Will setup ROS subscribers and callbacks
@@ -147,6 +154,15 @@ protected:
   /// Publish loop-closure information of current pose and active track information
   void publish_loopclosure_information();
 
+  /// Process queued camera measurements that have enough IMU data
+  void process_camera_queue();
+
+  /// Append camera measurement to the processing queue and apply backpressure
+  void enqueue_camera_measurement(const ov_core::CameraData &message);
+
+  /// Check if the first queued camera measurement can be processed
+  bool can_process_camera_queue_locked() const;
+
   /// Global node handler
   std::shared_ptr<rclcpp::Node> _node;
 
@@ -192,6 +208,8 @@ protected:
 
   // Thread atomics
   std::atomic<bool> thread_update_running;
+  std::atomic<bool> camera_worker_should_exit;
+  std::thread camera_worker_thread;
 
   /// Queue up camera measurements sorted by time and trigger once we have
   /// exactly one IMU measurement with timestamp newer than the camera measurement
@@ -199,6 +217,12 @@ protected:
   /// a nice feature to have for general robustness to bad camera drivers.
   std::deque<ov_core::CameraData> camera_queue;
   std::mutex camera_queue_mtx;
+  std::condition_variable camera_queue_cv;
+  double latest_imu_timestamp = -1;
+  double latest_imu_timestamp_inC = -1;
+  size_t max_camera_queue = 0;
+  bool drop_stale_camera_frames = false;
+  double last_camera_drop_warning_timestamp = -1;
 
   // Last camera message timestamps we have received (mapped by cam id)
   std::map<int, double> camera_last_timestamp;

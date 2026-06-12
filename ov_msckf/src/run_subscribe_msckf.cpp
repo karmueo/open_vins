@@ -19,6 +19,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <memory>
 
 #include "core/VioManager.h"
@@ -82,7 +83,11 @@ int main(int argc, char **argv) {
   // Create our VIO system
   VioManagerOptions params;
   params.print_and_load(parser);
-  params.use_multi_threading_subs = true;
+  int executor_threads = 0;
+#if ROS_AVAILABLE == 2
+  parser->parse_config("executor_threads", executor_threads, false);
+  executor_threads = std::max(executor_threads, 0);
+#endif
   sys = std::make_shared<VioManager>(params);
 #if ROS_AVAILABLE == 1
   viz = std::make_shared<ROS1Visualizer>(nh, sys);
@@ -107,7 +112,8 @@ int main(int argc, char **argv) {
   ros::waitForShutdown();
 #elif ROS_AVAILABLE == 2
   // rclcpp::spin(node);
-  rclcpp::executors::MultiThreadedExecutor executor;
+  rclcpp::ExecutorOptions executor_options;
+  rclcpp::executors::MultiThreadedExecutor executor(executor_options, executor_threads);
   executor.add_node(node);
   executor.spin();
 #endif
@@ -117,6 +123,7 @@ int main(int argc, char **argv) {
 #if ROS_AVAILABLE == 1
   ros::shutdown();
 #elif ROS_AVAILABLE == 2
+  viz.reset();
   rclcpp::shutdown();
 #endif
 
