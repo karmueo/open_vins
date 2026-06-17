@@ -1,6 +1,6 @@
-# OpenVINS ROS2 EuRoC Vicon Room 运行指南
+# OpenVINS ROS2 EuRoC Vicon Room 与 TUM VI 运行指南
 
-本文档记录如何在当前机器上使用已下载并转换好的 EuRoC MAV Vicon Room 数据集，通过 ROS2 跑通 OpenVINS。
+本文档记录如何在当前机器上使用已下载并转换好的 EuRoC MAV Vicon Room 数据集，以及如何把本机 TUM VI ROS1 bag 转成 ROS2 bag 后通过 ROS2 跑通 OpenVINS。
 
 ## 1. 数据集位置
 
@@ -17,6 +17,81 @@ ROS2 bag 已在本机准备好：
 - `/imu0`
 
 bag 中还包含 `/fcu/motor_speed` 等 OpenVINS 不需要的话题。播放时建议只播放上面 3 个话题，避免缺少自定义消息类型时影响运行。
+
+### 1.1 TUM VI ROS1 bag 转 ROS2 bag
+
+本机已下载的 TUM VI ROS1 bag 位于：
+
+```text
+/mnt/data/slam/TUM
+```
+
+当前目录内包含下面 5 个序列：
+
+```text
+dataset-room2_512_16.bag
+dataset-room3_512_16.bag
+dataset-room4_512_16.bag
+dataset-room5_512_16.bag
+dataset-room6_512_16.bag
+```
+
+这些 bag 的话题和项目内 `config/tum_vi` 配置匹配：
+
+- `/cam0/image_raw`
+- `/cam1/image_raw`
+- `/imu0`
+
+bag 中还包含 `/vrpn_client/raw_transform`。OpenVINS 运行只需要上面 3 个图像和 IMU 话题；真值文件已经在 `ov_data/tum_vi/` 中提供，例如 `dataset-room2_512_16.csv` 和 `dataset-room2_512_16.txt`。
+
+当前机器已有独立的 `rosbags` conda 环境，转换工具路径为：
+
+```text
+/home/scl/.conda/envs/rosbags/bin/rosbags-convert
+```
+
+推荐把转换后的 ROS2 bag 输出到单独目录：
+
+```bash
+mkdir -p /mnt/data/slam/TUM_ros2
+
+for bag in /mnt/data/slam/TUM/*.bag; do
+  name="$(basename "$bag" .bag)"
+  dst="/mnt/data/slam/TUM_ros2/$name"
+
+  if [ -e "$dst" ]; then
+    echo "SKIP existing: $dst"
+    continue
+  fi
+
+  /home/scl/.conda/envs/rosbags/bin/rosbags-convert \
+    --src "$bag" \
+    --dst "$dst" \
+    --dst-typestore ros2_jazzy \
+    --include-topic /cam0/image_raw /cam1/image_raw /imu0
+done
+```
+
+转换完成后检查 ROS2 bag 元信息：
+
+```bash
+find /mnt/data/slam/TUM_ros2 -maxdepth 2 -name metadata.yaml -print
+
+source /opt/ros/jazzy/setup.bash
+ros2 bag info /mnt/data/slam/TUM_ros2/dataset-room2_512_16
+```
+
+如果只想先验证一个序列，可以单独转换：
+
+```bash
+mkdir -p /mnt/data/slam/TUM_ros2
+
+/home/scl/.conda/envs/rosbags/bin/rosbags-convert \
+  --src /mnt/data/slam/TUM/dataset-room2_512_16.bag \
+  --dst /mnt/data/slam/TUM_ros2/dataset-room2_512_16 \
+  --dst-typestore ros2_jazzy \
+  --include-topic /cam0/image_raw /cam1/image_raw /imu0
+```
 
 ## 2. 构建环境
 
@@ -244,7 +319,111 @@ ros2 launch ov_msckf euroc_vicon_room.launch.py \
 
 RViz2 打开后可以观察路径、位姿、特征点等可视化内容。如果远程 SSH 没有配置图形转发，保持默认 `rviz_enable:=false`。
 
-## 4. 运行其他序列
+### 3.1 在局域网另一台机器上启动 RViz2
+
+可以。推荐让跑 OpenVINS 的机器继续使用默认 `rviz_enable:=false`，只在局域网内有桌面环境的另一台机器上启动 RViz2。RViz2 通过 ROS2/DDS 订阅 `/ov_msckf/pathimu`、`/ov_msckf/pathgt`、`/tf`、`/ov_msckf/trackhist` 和特征点云等话题，不需要在可视化机器上重复播放 bag 或重复启动 OpenVINS。
+
+运行 OpenVINS 的机器：
+
+```bash
+cd /home/scl/work/slam/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+export ROS_DOMAIN_ID=42
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+unset ROS_LOCALHOST_ONLY
+
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  verbosity:=WARNING \
+  config_path:=config/euroc_mav/estimator_config.yaml
+```
+
+局域网内启动 RViz2 的机器也需要安装 ROS2 Jazzy，并且建议构建或同步一份当前 OpenVINS 工作区，这样可以直接使用项目内 `display_ros2.rviz` 配置。`ROS_DOMAIN_ID` 必须和运行 OpenVINS 的机器一致：
+
+```bash
+cd /path/to/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+export ROS_DOMAIN_ID=42
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+unset ROS_LOCALHOST_ONLY
+
+ros2 topic list | grep ov_msckf
+rviz2 -d "$(ros2 pkg prefix ov_msckf)/share/ov_msckf/launch/display_ros2.rviz"
+```
+
+也可以用项目 launch 只启动 RViz2，不启动 OpenVINS 和真值对齐节点：
+
+```bash
+ros2 launch ov_msckf subscribe.launch.py \
+  ov_enable:=false \
+  rviz_enable:=true \
+  gt_align_enable:=false \
+  config:=euroc_mav \
+  dataset:=V1_01_easy
+```
+
+如果 `ros2 topic list` 在可视化机器上看不到 `/ov_msckf/...` 话题，优先检查下面几项：
+
+- 两台机器是否在同一局域网，且可以互相 `ping` 通。
+- 两台机器是否使用相同的 `ROS_DOMAIN_ID`。
+- Jazzy 环境下 `ROS_AUTOMATIC_DISCOVERY_RANGE` 是否为 `SUBNET`，并确认没有把发现限制在本机。
+- 防火墙、Docker 网络、VPN 或路由器是否阻止 DDS 发现和数据通信；跨网段或不支持组播的网络通常需要额外配置 DDS 静态发现或换到同一二层网络。
+- RViz2 订阅图像和点云会占用较多带宽；如果局域网带宽不足，可以在 RViz2 左侧 Displays 面板里先关闭 `Image Tracks` 和点云显示，只保留 `TF`、`Path VIO`、`Path GT`。
+
+## 4. 运行 TUM VI ROS2 bag
+
+TUM VI 使用项目内已有 `config/tum_vi` 配置和 `ov_data/tum_vi` 真值文件。推荐先用 `dataset-room2_512_16` 验证转换和运行流程。
+
+终端 1：启动 OpenVINS。
+
+```bash
+cd /home/scl/work/slam/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=tum_vi \
+  dataset:=dataset-room2_512_16 \
+  path_gt:=/home/scl/work/slam/open_vins/ov_data/tum_vi/dataset-room2_512_16.csv \
+  rviz_enable:=false \
+  verbosity:=INFO
+```
+
+终端 2：播放转换后的 ROS2 bag。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+
+ros2 bag play /mnt/data/slam/TUM_ros2/dataset-room2_512_16 \
+  --topics /cam0/image_raw /cam1/image_raw /imu0
+```
+
+如果要运行其他 TUM VI 序列，只替换 `dataset`、`path_gt` 和 bag 路径：
+
+```bash
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=tum_vi \
+  dataset:=dataset-room5_512_16 \
+  path_gt:=/home/scl/work/slam/open_vins/ov_data/tum_vi/dataset-room5_512_16.csv \
+  rviz_enable:=false \
+  verbosity:=INFO
+```
+
+```bash
+ros2 bag play /mnt/data/slam/TUM_ros2/dataset-room5_512_16 \
+  --topics /cam0/image_raw /cam1/image_raw /imu0
+```
+
+`dataset-room6_512_16` 可以转换和播放，但项目原始脚本中备注该序列需要更低 IMU 初始化阈值。运行 room6 前建议复制一份 `config/tum_vi/estimator_config.yaml`，把 `init_imu_thresh` 从 `0.45` 调低到 `0.25`，再通过 `config_path:=<新配置文件>` 指定；也可以先用 room2-room5 验证流程。
+
+## 5. 运行其他序列
 
 使用一键 launch 时只需要替换 `dataset` 参数：
 
@@ -259,41 +438,6 @@ ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_03_difficult \
   verbosity:=INFO
 ```
-
-## 5. 快速冒烟测试
-
-限制播放 20 秒：
-
-```bash
-ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
-  --topics /cam0/image_raw /cam1/image_raw /imu0 \
-  --playback-duration 20
-```
-
-板端实时性排查时建议两个序列使用完全相同参数，并关闭额外负载：
-
-```bash
-ros2 launch ov_msckf euroc_vicon_room.launch.py \
-  dataset:=V1_01_easy \
-  rviz_enable:=false \
-  gt_align_enable:=false \
-  save_total_state:=false \
-  publish_global_to_imu_tf:=false \
-  publish_calibration_tf:=false \
-  verbosity:=WARNING
-```
-
-另开终端记录输入和输出 topic 频率：
-
-```bash
-ros2 topic hz /imu0
-ros2 topic hz /cam0/image_raw
-ros2 topic hz /cam1/image_raw
-ros2 topic hz /ov_msckf/odomimu
-ros2 topic hz /ov_msckf/poseimu
-```
-
-RK3576 profile 下，`/ov_msckf/odomimu` 应尽量接近输入 IMU 频率，目标至少稳定在 180 Hz 左右；`/ov_msckf/poseimu` 应接近 `track_frequency`，即约 14-15 Hz。日志中的 `ms behind` 不应随运行时间持续增长。如果 `V1_01_easy` 和 `V1_02_medium` 的发布频率差异明显，优先排查实时性、队列积压和板端调度，而不是直接比较轨迹误差。
 
 ## 6. 和真值定量对比
 
@@ -431,45 +575,3 @@ ros2 run ov_eval error_singlerun \
 - RViz 或 `/ov_msckf/odomimu` 中轨迹连续，不突然跳变或快速发散。
 - `error_singlerun` 中 `rmse_pos` 越小越好；如果达到数米甚至更大，通常说明轨迹效果较差、初始化异常、播放流程不干净或配置/依赖环境有问题。
 - V1_01_easy 通常比 V1_03_difficult 更容易，建议先用 V1_01_easy 作为基准。
-
-## 7. 常见问题
-
-### 找不到 `ov_msckf`
-
-确认已经 source 当前工作区：
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source /home/scl/work/slam/open_vins/install/setup.bash
-```
-
-然后检查：
-
-```bash
-ros2 pkg executables ov_msckf
-```
-
-### 构建时出现 conda、libcurl、OpenCV 冲突
-
-使用本文第 2 节的干净环境构建命令。重点是：
-
-- `unset LD_LIBRARY_PATH LIBRARY_PATH PYTHONPATH`
-- `unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH`
-- `"-DCMAKE_IGNORE_PREFIX_PATH=/usr/local;/home/ai/anaconda3"`
-
-### 播放 bag 时遇到自定义消息类型
-
-不要播放全部话题，只播放 OpenVINS 需要的 3 个话题：
-
-```bash
-ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
-  --topics /cam0/image_raw /cam1/image_raw /imu0
-```
-
-### SSH 下是否需要 GUI
-
-不需要。第 3 节的一键 launch 默认 `rviz_enable:=false`，只有显式打开 RViz2 时才需要桌面环境或图形转发。
-
-### SSH 下想看 RViz
-
-需要先确保远程图形环境可用，例如 X11 转发、远程桌面或本机直接登录桌面。否则使用 `rviz_enable:=false`。
