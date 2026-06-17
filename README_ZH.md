@@ -22,22 +22,7 @@ bag 中还包含 `/fcu/motor_speed` 等 OpenVINS 不需要的话题。播放时�
 
 当前验证使用 ROS2 Jazzy。由于机器上存在 conda 和 `/usr/local` 下的 OpenCV，构建前建议清理环境变量，避免 CMake 链接到不兼容的库。
 
-### 2.1 清理 shell 环境
-
-在仓库根目录执行下面的环境清理。后续无论是非全量构建还是全量构建，都建议先执行这一段：
-
-```bash
-cd /home/scl/work/slam/open_vins
-
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER
-unset LD_LIBRARY_PATH LIBRARY_PATH PYTHONPATH
-unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH
-
-source /opt/ros/jazzy/setup.bash
-```
-
-### 2.2 推荐：只构建 OpenVINS 运行所需包
+### 2.1 推荐：只构建 OpenVINS 运行所需包
 
 如果只是运行本文档中的 EuRoC Vicon Room 数据集，不需要全量构建 `third_party/`。推荐只构建 OpenVINS 运行链路需要的包：
 
@@ -53,7 +38,7 @@ colcon build --cmake-clean-cache \
 
 这个命令会构建 `ov_data`、`ov_eval`、`ov_msckf` 以及它们需要的 OpenVINS 依赖包，例如 `ov_core`、`ov_init`。它不会编译 `third_party/image_pipeline` 和 `third_party/isaac_ros_image_pipeline`，因此不会要求安装这些第三方处理链的额外依赖。
 
-### 2.2.1 RK3576 板子注意事项
+### 2.1.1 RK3576 板子注意事项
 
 RK3576 板子上的路径和工作站不同：
 
@@ -88,7 +73,7 @@ rm -rf build/ov_eval build/ov_init build/ov_msckf \
 
 已经完整安装的 `ov_core`、`ov_data` 可以保留。
 
-### 2.3 可选：全量构建 third_party
+### 2.2 可选：全量构建 third_party
 
 只有在需要同时从源码构建 `third_party/image_pipeline` 或 `third_party/isaac_ros_image_pipeline` 时，才使用全量构建。全量构建会扫描仓库内所有 ROS2 包，因此需要额外安装第三方依赖。
 
@@ -165,16 +150,6 @@ ov_msckf test_sim_repeat
 # 进入 OpenVINS 工作区根目录。
 cd /home/scl/work/slam/open_vins
 
-# 使用系统默认工具链，避免 conda 或 /usr/local 中的库影响 ROS2/CMake 运行。
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-
-# 清理 conda 环境变量，避免 Python、OpenCV、Ceres、Boost 等依赖解析到 conda 环境。
-unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER
-
-# 清理动态库、Python 包和 ROS/CMake 前缀路径，避免混入旧工作区或非系统依赖。
-unset LD_LIBRARY_PATH LIBRARY_PATH PYTHONPATH
-unset CMAKE_PREFIX_PATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH
-
 # 加载系统 ROS2 Jazzy 环境。
 source /opt/ros/jazzy/setup.bash
 
@@ -185,14 +160,16 @@ source install/setup.bash
 # verbosity：日志等级；默认 WARNING，调试时可临时设为 INFO。
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
-  verbosity:=INFO
+  verbosity:=WARNING \
+  config_path:=config/euroc_mav/estimator_config.yaml
 
 # 如果数据集路径不是默认路径，则显式设置 bag_root。
 # bag_root：ROS2 bag 根目录；launch 会自动拼接 dataset 得到具体 bag 路径。
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
-  verbosity:=INFO \
-  bag_root:=/home/sjgd/scl/data/vicon_room1_ros2
+  verbosity:=WARNING \
+  bag_root:=/home/sjgd/scl/data/vicon_room1_ros2 \
+  config_path:=config/euroc_mav/estimator_config_rk3576.yaml
 ```
 
 该 launch 默认使用下面参数：
@@ -261,7 +238,7 @@ ros2 topic hz /ov_msckf/poseimu
 ```bash
 ros2 launch ov_msckf euroc_vicon_room.launch.py \
   dataset:=V1_01_easy \
-  verbosity:=INFO \
+  config_path:=config/euroc_mav/estimator_config_rk3576.yaml \
   rviz_enable:=true
 ```
 
