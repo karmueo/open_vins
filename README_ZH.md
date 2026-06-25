@@ -93,6 +93,103 @@ mkdir -p /mnt/data/slam/TUM_ros2
   --include-topic /cam0/image_raw /cam1/image_raw /imu0
 ```
 
+### 1.2 UZH-FPV ROS1 bag 转 ROS2 bag
+
+本机已下载的 UZH-FPV Drone Racing ROS1 bag 位于：
+
+```text
+/mnt/data/slam/uzh_fpv
+```
+
+当前目录按传感器配置分成 4 类：
+
+```text
+/mnt/data/slam/uzh_fpv/uzhfpv_indoor
+/mnt/data/slam/uzh_fpv/uzhfpv_indoor_45
+/mnt/data/slam/uzh_fpv/uzhfpv_outdoor
+/mnt/data/slam/uzh_fpv/uzhfpv_outdoor_45
+```
+
+项目内已经提供对应配置：
+
+```text
+config/uzhfpv_indoor
+config/uzhfpv_indoor_45
+config/uzhfpv_outdoor
+config/uzhfpv_outdoor_45
+```
+
+下载得到的 `.bag` 文件是 ROS1 bag，文件头为 `#ROSBAG V2.0`，不能直接用 `ros2 bag play` 播放。ROS2 下运行前需要先转换成 ROS2 bag 目录。OpenVINS 运行主要需要下面 3 个输入话题：
+
+- `/snappy_cam/stereo_l`
+- `/snappy_cam/stereo_r`
+- `/snappy_imu`
+
+bag 中还包含真值话题，例如 `/groundtruth/odometry` 和 `/groundtruth/pose`。如果只做 OpenVINS 在线播放，可以只转换上面 3 个输入话题；如果后续需要对比真值，可以把真值话题也一起保留。
+
+推荐把转换后的 ROS2 bag 输出到单独目录：
+
+```bash
+mkdir -p /mnt/data/slam/uzh_fpv_ros2
+
+for bag in /mnt/data/slam/uzh_fpv/*/*.bag; do
+  group="$(basename "$(dirname "$bag")")"
+  name="$(basename "$bag" .bag)"
+  dst="/mnt/data/slam/uzh_fpv_ros2/$group/$name"
+
+  if [ -e "$dst" ]; then
+    echo "SKIP existing: $dst"
+    continue
+  fi
+
+  mkdir -p "$(dirname "$dst")"
+
+  /home/scl/.conda/envs/rosbags/bin/rosbags-convert \
+    --src "$bag" \
+    --dst "$dst" \
+    --dst-typestore ros2_jazzy \
+    --include-topic \
+      /snappy_cam/stereo_l \
+      /snappy_cam/stereo_r \
+      /snappy_imu \
+      /groundtruth/odometry \
+      /groundtruth/pose
+done
+```
+
+转换完成后检查 ROS2 bag 元信息：
+
+```bash
+find /mnt/data/slam/uzh_fpv_ros2 -maxdepth 3 -name metadata.yaml -print
+
+source /opt/ros/jazzy/setup.bash
+ros2 bag info /mnt/data/slam/uzh_fpv_ros2/uzhfpv_indoor/indoor_forward_7_snapdragon_with_gt
+```
+
+如果只想先验证一个序列，可以单独转换：
+
+```bash
+mkdir -p /mnt/data/slam/uzh_fpv_ros2/uzhfpv_indoor
+
+/home/scl/.conda/envs/rosbags/bin/rosbags-convert \
+  --src /mnt/data/slam/uzh_fpv/uzhfpv_indoor/indoor_forward_7_snapdragon_with_gt.bag \
+  --dst /mnt/data/slam/uzh_fpv_ros2/uzhfpv_indoor/indoor_forward_7_snapdragon_with_gt \
+  --dst-typestore ros2_jazzy \
+  --include-topic \
+    /snappy_cam/stereo_l \
+    /snappy_cam/stereo_r \
+    /snappy_imu \
+    /groundtruth/odometry \
+    /groundtruth/pose
+```
+
+转换后的 bag 可以这样播放：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+ros2 bag play /mnt/data/slam/uzh_fpv_ros2/uzhfpv_indoor/indoor_forward_7_snapdragon_with_gt
+```
+
 ## 2. 构建环境
 
 当前验证使用 ROS2 Jazzy。由于机器上存在 conda 和 `/usr/local` 下的 OpenCV，构建前建议清理环境变量，避免 CMake 链接到不兼容的库。
@@ -376,7 +473,18 @@ ros2 launch ov_msckf subscribe.launch.py \
 - 防火墙、Docker 网络、VPN 或路由器是否阻止 DDS 发现和数据通信；跨网段或不支持组播的网络通常需要额外配置 DDS 静态发现或换到同一二层网络。
 - RViz2 订阅图像和点云会占用较多带宽；如果局域网带宽不足，可以在 RViz2 左侧 Displays 面板里先关闭 `Image Tracks` 和点云显示，只保留 `TF`、`Path VIO`、`Path GT`。
 
-## 4. 运行 TUM VI ROS2 bag
+## 4. 运行启动数据集
+
+本节使用 ROS2 启动 OpenVINS，并在另一个终端播放已经转换好的 ROS2 bag。启动 OpenVINS 前需要先完成第 2 章构建，并在每个终端加载 ROS2 和当前工作区环境：
+
+```bash
+cd /home/scl/work/slam/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+```
+
+### 4.1 运行 TUM VI ROS2 bag
 
 TUM VI 使用项目内已有 `config/tum_vi` 配置和 `ov_data/tum_vi` 真值文件。推荐先用 `dataset-room2_512_16` 验证转换和运行流程。
 
@@ -392,8 +500,7 @@ ros2 launch ov_msckf subscribe.launch.py \
   config:=tum_vi \
   dataset:=dataset-room2_512_16 \
   path_gt:=/home/scl/work/slam/open_vins/ov_data/tum_vi/dataset-room2_512_16.csv \
-  rviz_enable:=false \
-  verbosity:=INFO
+  rviz_enable:=true
 ```
 
 终端 2：播放转换后的 ROS2 bag。
@@ -412,8 +519,7 @@ ros2 launch ov_msckf subscribe.launch.py \
   config:=tum_vi \
   dataset:=dataset-room5_512_16 \
   path_gt:=/home/scl/work/slam/open_vins/ov_data/tum_vi/dataset-room5_512_16.csv \
-  rviz_enable:=false \
-  verbosity:=INFO
+  rviz_enable:=true
 ```
 
 ```bash
@@ -422,6 +528,137 @@ ros2 bag play /mnt/data/slam/TUM_ros2/dataset-room5_512_16 \
 ```
 
 `dataset-room6_512_16` 可以转换和播放，但项目原始脚本中备注该序列需要更低 IMU 初始化阈值。运行 room6 前建议复制一份 `config/tum_vi/estimator_config.yaml`，把 `init_imu_thresh` 从 `0.45` 调低到 `0.25`，再通过 `config_path:=<新配置文件>` 指定；也可以先用 room2-room5 验证流程。
+
+### 4.2 运行 EuRoC ROS2 bag
+
+EuRoC 使用项目内已有 `config/euroc_mav` 配置和 `ov_data/euroc_mav` 真值文件。当前本地 ROS2 bag 根目录为：
+
+```text
+/mnt/data/slam/vicon_room1_ros2
+```
+
+推荐先用 `V1_01_easy` 验证流程。常规运行不需要指定 `config_path`，`subscribe.launch.py` 会根据 `config:=euroc_mav` 自动使用安装目录下的 `config/euroc_mav/estimator_config.yaml`。
+
+终端 1：启动 OpenVINS。
+
+```bash
+cd /home/scl/work/slam/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=euroc_mav \
+  dataset:=V1_01_easy \
+  path_gt:=/home/scl/work/slam/open_vins/ov_data/euroc_mav/V1_01_easy.csv \
+  rviz_enable:=true
+```
+
+终端 2：播放转换后的 ROS2 bag。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+
+ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_01_easy \
+  --topics /cam0/image_raw /cam1/image_raw /imu0
+```
+
+如果要运行其他 EuRoC Vicon Room 序列，只替换 `dataset`、`path_gt` 和 bag 路径：
+
+```bash
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=euroc_mav \
+  dataset:=V1_02_medium \
+  path_gt:=/home/scl/work/slam/open_vins/ov_data/euroc_mav/V1_02_medium.csv \
+  rviz_enable:=true
+```
+
+```bash
+ros2 bag play /mnt/data/slam/vicon_room1_ros2/V1_02_medium \
+  --topics /cam0/image_raw /cam1/image_raw /imu0
+```
+
+也可以使用项目内已有的一键 launch，自动启动 OpenVINS 并播放本地 EuRoC ROS2 bag：
+
+```bash
+ros2 launch ov_msckf euroc_vicon_room.launch.py \
+  dataset:=V1_01_easy \
+  verbosity:=INFO
+```
+
+### 4.3 运行 UZH-FPV ROS2 bag
+
+UZH-FPV 使用项目内已有 `config/uzhfpv_indoor`、`config/uzhfpv_indoor_45`、`config/uzhfpv_outdoor` 和 `config/uzhfpv_outdoor_45` 配置。ROS2 bag 根目录为：
+
+```text
+/mnt/data/slam/uzh_fpv_ros2
+```
+
+运行时 `config` 需要和 bag 所在目录匹配，`dataset` 使用 bag 目录名。推荐先用 `indoor_forward_7_snapdragon_with_gt` 验证流程。
+
+终端 1：启动 OpenVINS。
+
+```bash
+cd /home/scl/work/slam/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=uzhfpv_indoor \
+  dataset:=indoor_forward_7_snapdragon_with_gt \
+  path_gt:=/home/scl/work/slam/open_vins/ov_data/uzhfpv_indoor/indoor_forward_7_snapdragon_with_gt.txt \
+  rviz_enable:=true
+```
+
+终端 2：播放转换后的 ROS2 bag。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+
+ros2 bag play /mnt/data/slam/uzh_fpv_ros2/uzhfpv_indoor/indoor_forward_7_snapdragon_with_gt \
+  --topics /snappy_cam/stereo_l /snappy_cam/stereo_r /snappy_imu
+```
+
+如果要运行 outdoor 序列，只替换 `config`、`dataset`、`path_gt` 和 bag 路径：
+
+```bash
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=uzhfpv_outdoor \
+  dataset:=outdoor_forward_3_snapdragon_with_gt \
+  path_gt:=/home/scl/work/slam/open_vins/ov_data/uzhfpv_outdoor/outdoor_forward_3_snapdragon_with_gt.txt \
+  rviz_enable:=true
+```
+
+```bash
+ros2 bag play /mnt/data/slam/uzh_fpv_ros2/uzhfpv_outdoor/outdoor_forward_3_snapdragon_with_gt \
+  --topics /snappy_cam/stereo_l /snappy_cam/stereo_r /snappy_imu
+```
+
+如果只想先看 VIO 是否正常发布结果，可以临时关闭真值对齐节点：
+
+```bash
+ros2 launch ov_msckf subscribe.launch.py \
+  config:=uzhfpv_indoor \
+  dataset:=indoor_forward_7_snapdragon_with_gt \
+  gt_align_enable:=false \
+  rviz_enable:=false \
+  verbosity:=INFO
+```
+
+### 4.4 查看运行状态
+
+运行 TUM VI、EuRoC 或 UZH-FPV 时，都可以另开终端查看 OpenVINS 输出话题：
+
+```bash
+cd /home/scl/work/slam/open_vins
+
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 topic hz /ov_msckf/odomimu
+ros2 topic hz /ov_msckf/poseimu
+```
 
 ## 5. 运行其他序列
 
