@@ -149,15 +149,25 @@ ROS2Visualizer::ROS2Visualizer(std::shared_ptr<rclcpp::Node> node, std::shared_p
 
   // Start thread for the image publishing
   if (_app->get_params().use_multi_threading_pubs) {
-    std::thread thread([&] {
+    image_publisher_thread = std::thread([this] {
       rclcpp::Rate loop_rate(20);
-      while (rclcpp::ok()) {
+      while (!stop_image_publisher.load() && rclcpp::ok()) {
         publish_images();
         loop_rate.sleep();
       }
     });
-    thread.detach();
   }
+}
+
+ROS2Visualizer::~ROS2Visualizer() { stop_background_threads(); }
+
+void ROS2Visualizer::stop_background_threads() {
+  stop_image_publisher.store(true);
+  if (image_publisher_thread.joinable())
+    image_publisher_thread.join();
+  std::lock_guard<std::mutex> lock(update_thread_mtx);
+  if (update_thread.joinable())
+    update_thread.join();
 }
 
 void ROS2Visualizer::setup_subscribers(std::shared_ptr<ov_core::YamlParser> parser) {
@@ -165,11 +175,24 @@ void ROS2Visualizer::setup_subscribers(std::shared_ptr<ov_core::YamlParser> pars
   // We need a valid parser
   assert(parser != nullptr);
 
+  // ROS2 node options can auto-declare parameter overrides. Prefer an
+  // explicit sensor-specific override, then the legacy topic_* parameter,
+  // and finally the topic in the calibration file.
+  auto resolve_topic = [&](const std::string &legacy_name, const std::string &fallback, const std::string &config_name,
+                           const std::string &sensor_name) {
+    std::string topic = fallback;
+    const bool has_legacy = _node->has_parameter(legacy_name);
+    if (_node->has_parameter(sensor_name + "_rostopic") || !has_legacy)
+      parser->parse_external(config_name, sensor_name, "rostopic", topic);
+    else
+      _node->get_parameter(legacy_name, topic);
+    if (!has_legacy)
+      _node->declare_parameter<std::string>(legacy_name, topic);
+    return topic;
+  };
+
   // Create imu subscriber (handle legacy ros param info)
-  std::string topic_imu;
-  _node->declare_parameter<std::string>("topic_imu", "/imu0");
-  _node->get_parameter("topic_imu", topic_imu);
-  parser->parse_external("relative_config_imu", "imu0", "rostopic", topic_imu);
+  const std::string topic_imu = resolve_topic("topic_imu", "/imu0", "relative_config_imu", "imu0");
   sub_imu = _node->create_subscription<sensor_msgs::msg::Imu>(topic_imu, rclcpp::SensorDataQoS(),
                                                               std::bind(&ROS2Visualizer::callback_inertial, this, std::placeholders::_1));
   PRINT_INFO("subscribing to IMU: %s\n", topic_imu.c_str());
@@ -178,13 +201,8 @@ void ROS2Visualizer::setup_subscribers(std::shared_ptr<ov_core::YamlParser> pars
   // https://answers.ros.org/question/96346/subscribe-to-two-image_raws-with-one-function/?answer=96491#post-id-96491
   if (_app->get_params().state_options.num_cameras == 2) {
     // Read in the topics
-    std::string cam_topic0, cam_topic1;
-    _node->declare_parameter<std::string>("topic_camera" + std::to_string(0), "/cam" + std::to_string(0) + "/image_raw");
-    _node->get_parameter("topic_camera" + std::to_string(0), cam_topic0);
-    _node->declare_parameter<std::string>("topic_camera" + std::to_string(1), "/cam" + std::to_string(1) + "/image_raw");
-    _node->get_parameter("topic_camera" + std::to_string(1), cam_topic1);
-    parser->parse_external("relative_config_imucam", "cam" + std::to_string(0), "rostopic", cam_topic0);
-    parser->parse_external("relative_config_imucam", "cam" + std::to_string(1), "rostopic", cam_topic1);
+    const std::string cam_topic0 = resolve_topic("topic_camera0", "/cam0/image_raw", "relative_config_imucam", "cam0");
+    const std::string cam_topic1 = resolve_topic("topic_camera1", "/cam1/image_raw", "relative_config_imucam", "cam1");
     // Create sync filter (they have unique pointers internally, so we have to use move logic here...)
     auto image_sub0 = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::Image>>(_node, cam_topic0);
     auto image_sub1 = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::Image>>(_node, cam_topic1);
@@ -203,10 +221,9 @@ void ROS2Visualizer::setup_subscribers(std::shared_ptr<ov_core::YamlParser> pars
     // Now we should add any non-stereo callbacks here
     for (int i = 0; i < _app->get_params().state_options.num_cameras; i++) {
       // read in the topic
-      std::string cam_topic;
-      _node->declare_parameter<std::string>("topic_camera" + std::to_string(i), "/cam" + std::to_string(i) + "/image_raw");
-      _node->get_parameter("topic_camera" + std::to_string(i), cam_topic);
-      parser->parse_external("relative_config_imucam", "cam" + std::to_string(i), "rostopic", cam_topic);
+      const std::string camera_id = std::to_string(i);
+      const std::string cam_topic = resolve_topic("topic_camera" + camera_id, "/cam" + camera_id + "/image_raw",
+                                                  "relative_config_imucam", "cam" + camera_id);
       // create subscriber
       // auto sub = _node->create_subscription<sensor_msgs::msg::Image>(
       //    cam_topic, rclcpp::SensorDataQoS(), std::bind(&ROS2Visualizer::callback_monocular, this, std::placeholders::_1, i));
@@ -450,10 +467,14 @@ void ROS2Visualizer::callback_inertial(const sensor_msgs::msg::Imu::SharedPtr ms
   // If the processing queue is currently active / running just return so we can keep getting measurements
   // Otherwise create a second thread to do our update in an async manor
   // The visualization of the state, images, and features will be synchronous with the update!
+  std::unique_lock<std::mutex> thread_lock(update_thread_mtx);
   if (thread_update_running)
     return;
+  if (update_thread.joinable())
+    update_thread.join();
   thread_update_running = true;
-  std::thread thread([&] {
+  // Capture the timestamp by value: this work may outlive the IMU callback.
+  std::thread thread([this, imu_timestamp = message.timestamp] {
     // Lock on the queue (prevents new images from appending)
     std::lock_guard<std::mutex> lck(camera_queue_mtx);
 
@@ -471,7 +492,7 @@ void ROS2Visualizer::callback_inertial(const sensor_msgs::msg::Imu::SharedPtr ms
 
       // Loop through our queue and see if we are able to process any of our camera measurements
       // We are able to process if we have at least one IMU measurement greater than the camera time
-      double timestamp_imu_inC = message.timestamp - _app->get_state()->_calib_dt_CAMtoIMU->value()(0);
+      double timestamp_imu_inC = imu_timestamp - _app->get_state()->_calib_dt_CAMtoIMU->value()(0);
       while (!camera_queue.empty() && camera_queue.at(0).timestamp < timestamp_imu_inC) {
         auto rT0_1 = boost::posix_time::microsec_clock::local_time();
         double update_dt = 100.0 * (timestamp_imu_inC - camera_queue.at(0).timestamp);
@@ -486,12 +507,12 @@ void ROS2Visualizer::callback_inertial(const sensor_msgs::msg::Imu::SharedPtr ms
     thread_update_running = false;
   });
 
-  // If we are single threaded, then run single threaded
-  // Otherwise detach this thread so it runs in the background!
+  // Keep the asynchronous worker joinable so shutdown can wait for it.
   if (!_app->get_params().use_multi_threading_subs) {
+    thread_lock.unlock();
     thread.join();
   } else {
-    thread.detach();
+    update_thread = std::move(thread);
   }
 }
 

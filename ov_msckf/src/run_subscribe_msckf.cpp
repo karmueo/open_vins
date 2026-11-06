@@ -20,6 +20,10 @@
  */
 
 #include <memory>
+#if ROS_AVAILABLE == 2
+#include <chrono>
+#include <thread>
+#endif
 
 #include "core/VioManager.h"
 #include "core/VioManagerOptions.h"
@@ -113,10 +117,22 @@ int main(int argc, char **argv) {
 #endif
 
   // Final visualization
+#if ROS_AVAILABLE == 2
+  // Executor::spin() has stopped dispatching callbacks. Join workers before
+  // accessing their state or destroying their publishers and subscriptions.
+  viz->stop_background_threads();
+  while (sys->initialization_running())
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#endif
   viz->visualize_final();
 #if ROS_AVAILABLE == 1
   ros::shutdown();
 #elif ROS_AVAILABLE == 2
+  executor.remove_node(node, false);
+  viz.reset();
+  sys.reset();
+  parser.reset();
+  node.reset();
   rclcpp::shutdown();
 #endif
 

@@ -183,6 +183,14 @@ int main(int argc, char **argv) {
   ros::shutdown();
 #elif ROS_AVAILABLE == 2
   viz->visualize_final();
+  // The visualizer owns publishers and image_transport plugins. Destroy
+  // them while their node and the ROS context are still alive; keeping the
+  // global shared_ptr until process teardown can unload plugins first.
+  viz.reset();
+  sys.reset();
+  sim.reset();
+  parser.reset();
+  node.reset();
   rclcpp::shutdown();
 #endif
 

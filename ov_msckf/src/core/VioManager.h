@@ -98,6 +98,11 @@ public:
   /// If we are initialized or not
   bool initialized() { return is_initialized_vio && timelastupdate != -1; }
 
+#if ROS_AVAILABLE == 2
+  /// Whether the asynchronous initializer still accesses this manager.
+  bool initialization_running() const { return thread_init_running.load(); }
+#endif
+
   /// Timestamp that the system was initialized at
   double initialized_time() { return startup_time; }
 
