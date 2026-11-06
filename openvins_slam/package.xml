@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>openvins_slam</name>
+  <version>0.1.0</version>
+  <description>Offline and paced MCAP stereo visual-inertial estimation with OpenVINS.</description>
+  <maintainer email="maintainer@example.com">OpenVINS contributors</maintainer>
+  <license>GPL-3.0-or-later</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>ament_index_cpp</depend>
+  <depend>rclcpp</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
+  <depend>mcap_vendor</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>rosgraph_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>ov_core</depend>
+  <depend>ov_init</depend>
+  <depend>ov_msckf</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+  <depend>libopencv-dev</depend>
+  <exec_depend>ego_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
