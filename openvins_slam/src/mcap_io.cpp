@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -13,9 +15,6 @@
 #include <vector>
 
 #include <fcntl.h>
-#include <linux/fs.h>
-#include <sys/stat.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <mcap/writer.hpp>
@@ -83,15 +82,6 @@ private:
   uint64_t size_ = 0;
 };
 
-bool path_exists_including_symlink(const std::string &path) {
-  struct stat info {};
-  if (::lstat(path.c_str(), &info) == 0)
-    return true;
-  if (errno == ENOENT)
-    return false;
-  throw std::system_error(errno, std::generic_category(), "inspect output path " + path);
-}
-
 } // namespace
 
 McapInput::McapInput(const std::string &path) {
@@ -153,14 +143,16 @@ public:
   void open(const std::string &output_path, const std::string &input_path, McapInput &input) {
     if (output_path.empty())
       throw std::invalid_argument("output MCAP path is empty");
-    if (path_exists_including_symlink(output_path))
-      throw std::runtime_error("output MCAP path already exists: " + output_path);
-    // An existing input cannot equal a non-existing output; this additionally
-    // makes the intended same-file check explicit for relative path aliases.
-    const auto absolute_input = std::filesystem::absolute(input_path).lexically_normal();
-    const auto absolute_output = std::filesystem::absolute(output_path).lexically_normal();
-    if (absolute_input == absolute_output)
+    const std::filesystem::path input_file = std::filesystem::weakly_canonical(std::filesystem::absolute(input_path));
+    const std::filesystem::path output_file =
+        std::filesystem::weakly_canonical(std::filesystem::absolute(output_path));
+    if (input_file == output_file)
       throw std::runtime_error("input and output MCAP must be different files");
+    const std::filesystem::path parent = output_file.parent_path();
+    std::error_code error;
+    std::filesystem::create_directories(parent, error);
+    if (error)
+      throw std::filesystem::filesystem_error("create output MCAP parent directory", parent, error);
     output_ = output_path;
     std::string pattern = output_path + ".partial.XXXXXX";
     std::vector<char> buffer(pattern.begin(), pattern.end());
@@ -279,8 +271,10 @@ public:
         check.statistics()->messageCount != message_count_)
       throw std::runtime_error("output MCAP summary message count or profile is invalid");
     check.close();
-    // renameat2 guarantees that a concurrent creator is never overwritten.
-    if (::syscall(SYS_renameat2, AT_FDCWD, temporary_.c_str(), AT_FDCWD, output_.c_str(), RENAME_NOREPLACE) != 0)
+    // Rename within the same directory atomically replaces any existing file,
+    // so reruns overwrite the previous output while readers never observe a
+    // partially written MCAP.
+    if (::rename(temporary_.c_str(), output_.c_str()) != 0)
       throw std::system_error(errno, std::generic_category(), "publish output MCAP " + output_);
     temporary_.clear();
   }

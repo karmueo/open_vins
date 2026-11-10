@@ -104,31 +104,49 @@ TEST_F(McapIoTest, CopiesUnmodifiedRecordsAndAddsStandardSchemaInSortedReadOrder
   EXPECT_EQ(appended, 1);
 }
 
-TEST_F(McapIoTest, RefusesExistingAndConcurrentlyCreatedOutput) {
+TEST_F(McapIoTest, CreatesMissingParentDirectoriesAndOverwritesExistingOutput) {
   make_input();
-  openvins_slam::McapInput input(input_path_);
   {
-    std::ofstream f(output_path_);
-    f << "original";
+    std::ofstream(output_path_) << "original";
   }
-  EXPECT_THROW((openvins_slam::McapOutput(output_path_, input_path_, input)), std::runtime_error);
-  std::filesystem::remove(output_path_);
   {
+    openvins_slam::McapInput input(input_path_);
     openvins_slam::McapOutput output(output_path_, input_path_, input);
     input.for_each([&](const mcap::MessageView &view) {
       output.write_original(view);
       return true;
     });
+    std::ifstream before(output_path_);
+    std::string content;
+    before >> content;
+    EXPECT_EQ(content, "original");
     {
-      std::ofstream f(output_path_);
-      f << "concurrent";
+      std::ofstream concurrent(output_path_);
+      concurrent << "concurrent";
     }
-    EXPECT_THROW(output.commit(), std::system_error);
+    EXPECT_NO_THROW(output.commit());
   }
-  std::ifstream f(output_path_);
-  std::string content;
-  f >> content;
-  EXPECT_EQ(content, "concurrent");
+  {
+    openvins_slam::McapInput result(output_path_);
+    int messages = 0;
+    result.for_each([&](const mcap::MessageView &view) {
+      ++messages;
+      return true;
+    });
+    EXPECT_EQ(messages, 4);
+  }
+
+  const auto nested = directory_ + "/nested/deeper/output.mcap";
+  {
+    openvins_slam::McapInput input(input_path_);
+    openvins_slam::McapOutput output(nested, input_path_, input);
+    input.for_each([&](const mcap::MessageView &view) {
+      output.write_original(view);
+      return true;
+    });
+    output.commit();
+  }
+  EXPECT_TRUE(std::filesystem::is_regular_file(nested));
   for (const auto &entry : std::filesystem::directory_iterator(directory_))
     EXPECT_EQ(entry.path().string().find(".partial."), std::string::npos);
 }

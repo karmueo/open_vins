@@ -34,7 +34,7 @@
 #include "openvins_slam/calibration.hpp"
 #include "openvins_slam/mcap_io.hpp"
 #include "openvins_slam/snapshot.hpp"
-#include "openvins_slam/trajectory_csv.hpp"
+#include "openvins_slam/trajectory_writer.hpp"
 
 namespace openvins_slam {
 namespace {
@@ -75,8 +75,6 @@ struct ImuSample {
 
 struct CameraSample {
   int64_t ns;
-  uint64_t log_ns;
-  uint64_t index;
   sensor_msgs::msg::CompressedImage image;
 };
 
@@ -84,7 +82,7 @@ class BagProcessor {
 public:
   BagProcessor(const rclcpp::Node::SharedPtr &node, const Calibration &calibration, bool realtime,
                bool apply_bias, bool record_debug, const std::string &imu_topic, const std::string &stereo_topic,
-               McapOutput *output, TrajectoryCsv *trajectory, bool half_resolution)
+               McapOutput *output, TrajectoryWriter *trajectory, bool half_resolution)
       : node_(node), calibration_(calibration), realtime_(realtime), apply_bias_(apply_bias),
         record_debug_(record_debug), imu_topic_(imu_topic), stereo_topic_(stereo_topic), output_(output), trajectory_(trajectory) {
     auto options = calibration_.make_options(half_resolution);
@@ -120,7 +118,7 @@ public:
     } else if (topic == stereo_topic_) {
       if (!view.schema || view.schema->name != "sensor_msgs/msg/CompressedImage" || view.channel->messageEncoding != "cdr")
         throw std::runtime_error("stereo topic must be sensor_msgs/msg/CompressedImage in CDR format");
-      add_camera(deserialize<sensor_msgs::msg::CompressedImage>(view.message), view.message.logTime);
+      add_camera(deserialize<sensor_msgs::msg::CompressedImage>(view.message));
     }
     if ((source_messages_ % 2000) == 0) rclcpp::spin_some(node_);
     return rclcpp::ok();
@@ -230,14 +228,13 @@ private:
     process_ready();
   }
 
-  void add_camera(sensor_msgs::msg::CompressedImage msg, uint64_t log_ns) {
+  void add_camera(sensor_msgs::msg::CompressedImage msg) {
     const int64_t ns = stamp_ns(msg.header.stamp);
     if (image_count_ && ns <= last_camera_ns_) throw std::runtime_error("camera header timestamps must increase strictly");
-    if (!image_count_) first_image_ns_ = ns;
     last_camera_ns_ = ns;
-    const uint64_t index = image_count_++;
+    ++image_count_;
     set_anchor(ns);
-    pending_.push_back({ns, log_ns, index, std::move(msg)});
+    pending_.push_back({ns, std::move(msg)});
     process_ready();
   }
 
@@ -300,7 +297,7 @@ private:
     max_slam_features_ = std::max(max_slam_features_, state->_features_SLAM.size());
     last_snapshot_ = make_snapshot(state, calibration_, sample.ns, gyro, gyro_var);
     has_snapshot_ = true;
-    if (trajectory_) trajectory_->write(sample.index, sample.ns, sample.log_ns, first_image_ns_, last_snapshot_.odom.pose.pose);
+    if (trajectory_) trajectory_->write(sample.ns, last_snapshot_.odom.pose.pose);
     for (int i = 0; i < 3; ++i) {
       geometry_msgs::msg::PoseStamped pose;
       pose.header = last_snapshot_.poses[i].header;
@@ -366,12 +363,12 @@ private:
   bool realtime_, apply_bias_, record_debug_;
   std::string imu_topic_, stereo_topic_;
   McapOutput *output_;
-  TrajectoryCsv *trajectory_;
+  TrajectoryWriter *trajectory_;
   std::unique_ptr<ov_msckf::VioManager> manager_;
   std::deque<ImuSample> imu_;
   std::deque<CameraSample> pending_;
   int64_t offset_ns_ = 0, anchor_ns_ = 0, last_imu_raw_ns_ = 0, last_camera_ns_ = 0;
-  int64_t initialization_ns_ = 0, first_image_ns_ = 0;
+  int64_t initialization_ns_ = 0;
   bool have_anchor_ = false, have_pace_start_ = false;
   uint64_t first_log_ns_ = 0, source_messages_ = 0, imu_count_ = 0, image_count_ = 0;
   uint64_t fed_images_ = 0, output_count_ = 0, skipped_early_ = 0, skipped_tail_ = 0;
@@ -412,7 +409,7 @@ int main(int argc, char **argv) {
     const bool apply_imu_bias = node->declare_parameter<bool>("apply_imu_bias", true);
     const bool record_debug = node->declare_parameter<bool>("record_debug", false);
     const bool save_trajectory = node->declare_parameter<bool>("save_trajectory", false);
-    const auto trajectory_csv = node->declare_parameter<std::string>("trajectory_csv", "");
+    const auto trajectory_file = node->declare_parameter<std::string>("trajectory_file", "");
     const auto stereo_topic = node->declare_parameter<std::string>("stereo_topic", "/stereo/image_raw");
     const auto imu_topic = node->declare_parameter<std::string>("imu_topic", "/imu");
     if (cameras.empty() || in_bag.empty()) throw std::runtime_error("parameters cameras and in_bag are required");
@@ -429,8 +426,8 @@ int main(int argc, char **argv) {
     else
       RCLCPP_INFO(node->get_logger(), "IMU time correction from calibration: %.9f s", calibration.imu_time_offset);
     openvins_slam::McapInput input(in_bag);
-    std::unique_ptr<openvins_slam::TrajectoryCsv> trajectory;
-    if (save_trajectory) trajectory = std::make_unique<openvins_slam::TrajectoryCsv>(trajectory_csv, in_bag, outbag);
+    std::unique_ptr<openvins_slam::TrajectoryWriter> trajectory;
+    if (save_trajectory) trajectory = std::make_unique<openvins_slam::TrajectoryWriter>(trajectory_file, in_bag, outbag);
     std::unique_ptr<openvins_slam::McapOutput> output;
     if (!outbag.empty()) output = std::make_unique<openvins_slam::McapOutput>(outbag, in_bag, input);
     openvins_slam::BagProcessor processor(node, calibration, realtime, apply_imu_bias, record_debug,
@@ -446,11 +443,11 @@ int main(int argc, char **argv) {
     if (output) { output->commit(); output_committed = true; }
     if (trajectory) {
       try {
-        if (!rclcpp::ok()) throw std::runtime_error("processing interrupted before trajectory CSV commit");
+        if (!rclcpp::ok()) throw std::runtime_error("processing interrupted before trajectory file commit");
         trajectory->commit();
       } catch (const std::exception &e) {
         if (output_committed)
-          throw std::runtime_error("output MCAP already committed at " + outbag + "; trajectory CSV not committed: " + e.what());
+          throw std::runtime_error("output MCAP already committed at " + outbag + "; trajectory file not committed: " + e.what());
         throw;
       }
     }
