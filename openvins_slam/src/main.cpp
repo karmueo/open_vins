@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -412,19 +413,36 @@ int main(int argc, char **argv) {
     const auto trajectory_file = node->declare_parameter<std::string>("trajectory_file", "");
     const auto stereo_topic = node->declare_parameter<std::string>("stereo_topic", "/stereo/image_raw");
     const auto imu_topic = node->declare_parameter<std::string>("imu_topic", "/imu");
-    if (cameras.empty() || in_bag.empty()) throw std::runtime_error("parameters cameras and in_bag are required");
+    if (in_bag.empty()) throw std::runtime_error("parameter in_bag is required");
+    std::string calibration_path = cameras;
+    if (calibration_path.empty()) {
+      const auto inferred_path = std::filesystem::path(in_bag).parent_path() / "calib.yaml";
+      std::error_code filesystem_error;
+      if (!std::filesystem::is_regular_file(inferred_path, filesystem_error)) {
+        throw std::runtime_error("parameter cameras is empty and calib.yaml was not found next to input MCAP: " +
+                                 inferred_path.string() + "; pass -p cameras:=/path/to/calib.yaml");
+      }
+      calibration_path = inferred_path.string();
+      RCLCPP_INFO(node->get_logger(), "Parameter cameras not set; using calibration file: %s", calibration_path.c_str());
+    }
     if (!realtime && outbag.empty()) throw std::runtime_error("outbag is required when realtime=false");
     if (stereo_topic.empty() || imu_topic.empty() || stereo_topic == imu_topic) throw std::runtime_error("invalid input topic names");
-    auto calibration = openvins_slam::Calibration::load(cameras);
-    const double calibration_offset = calibration.imu_time_offset;
-    calibration.imu_time_offset = node->declare_parameter<double>("imu_time_offset_sec", calibration_offset);
+    auto calibration = openvins_slam::Calibration::load(calibration_path);
+    const double file_offset = calibration.imu_time_offset;
+    const bool offset_overridden =
+        node->get_node_parameters_interface()->get_parameter_overrides().count("imu_time_offset_sec") > 0;
+    calibration.imu_time_offset = node->declare_parameter<double>("imu_time_offset_sec", file_offset);
     if (!std::isfinite(calibration.imu_time_offset) || std::abs(calibration.imu_time_offset) > 10)
       throw std::runtime_error("imu_time_offset_sec must be finite and within +/-10 seconds");
-    if (calibration.imu_time_offset != calibration_offset)
-      RCLCPP_WARN(node->get_logger(), "Explicit IMU time correction override: %.9f s (calibration: %.9f s)",
-                  calibration.imu_time_offset, calibration_offset);
-    else
-      RCLCPP_INFO(node->get_logger(), "IMU time correction from calibration: %.9f s", calibration.imu_time_offset);
+    if (offset_overridden) {
+      RCLCPP_WARN(node->get_logger(), "Explicit IMU time correction: %.9f s (calibration file: %.9f s)",
+                  calibration.imu_time_offset, file_offset);
+    } else if (file_offset != 0.0) {
+      RCLCPP_INFO(node->get_logger(), "Using IMU time correction from calibration: %.9f s", calibration.imu_time_offset);
+    } else {
+      RCLCPP_INFO(node->get_logger(), "Using IMU time correction: %.9f s (calibration value or 0.0 if absent)",
+                  calibration.imu_time_offset);
+    }
     openvins_slam::McapInput input(in_bag);
     std::unique_ptr<openvins_slam::TrajectoryWriter> trajectory;
     if (save_trajectory) trajectory = std::make_unique<openvins_slam::TrajectoryWriter>(trajectory_file, in_bag, outbag);

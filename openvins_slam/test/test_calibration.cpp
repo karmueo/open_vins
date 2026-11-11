@@ -76,6 +76,30 @@ TEST_F(CalibrationTest, ConvertsUnitsAndBothOptionSets) {
   EXPECT_DOUBLE_EQ(full.camera_intrinsics.at(0)->get_value()(0), 600);
 }
 
+TEST_F(CalibrationTest, MissingTimeOffsetDefaultsToZero) {
+  std::ifstream in(path_);
+  std::string s((std::istreambuf_iterator<char>(in)), {});
+  const auto pos = s.find("ROS.ImuTimeOffsetSec:");
+  ASSERT_NE(pos, std::string::npos);
+  const auto end = s.find('\n', pos);
+  ASSERT_NE(end, std::string::npos);
+  s.erase(pos, end - pos + 1);
+  std::ofstream(path_) << s;
+  const auto c = openvins_slam::Calibration::load(path_);
+  EXPECT_DOUBLE_EQ(c.imu_time_offset, 0);
+}
+
+TEST_F(CalibrationTest, RejectsInvalidTimeOffset) {
+  std::ifstream in(path_);
+  std::string s((std::istreambuf_iterator<char>(in)), {});
+  const std::string field = "ROS.ImuTimeOffsetSec: -0.005";
+  const auto pos = s.find(field);
+  ASSERT_NE(pos, std::string::npos);
+  s.replace(pos, field.size(), "ROS.ImuTimeOffsetSec: 11.0");
+  std::ofstream(path_) << s;
+  EXPECT_THROW(openvins_slam::Calibration::load(path_), std::runtime_error);
+}
+
 TEST_F(CalibrationTest, RejectsUnsupportedModel) {
   std::ifstream in(path_);
   std::string s((std::istreambuf_iterator<char>(in)), {});

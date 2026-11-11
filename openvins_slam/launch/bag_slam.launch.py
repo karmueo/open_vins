@@ -49,7 +49,7 @@ def _make_vio_node(context):
 
 def generate_launch_description():
     arguments = [
-        DeclareLaunchArgument("cameras", description="Path to the stereo/IMU calib.yaml"),
+        DeclareLaunchArgument("cameras", default_value="", description="Path to calib.yaml; defaults to calib.yaml beside the input MCAP"),
         DeclareLaunchArgument("in_bag", description="Path to the input MCAP file"),
         DeclareLaunchArgument("outbag", default_value="", description="Optional output MCAP path"),
         DeclareLaunchArgument("realtime", default_value="true", description="Replay at the recorded rate"),
@@ -60,7 +60,7 @@ def generate_launch_description():
         DeclareLaunchArgument("trajectory_file", default_value="", description="Optional TUM path; defaults beside input MCAP"),
         DeclareLaunchArgument("stereo_topic", default_value="/stereo/image_raw", description="Compressed stereo input topic"),
         DeclareLaunchArgument("imu_topic", default_value="/imu", description="IMU input topic"),
-        DeclareLaunchArgument("imu_time_offset_sec", default_value="", description="Optional IMU timestamp offset override in seconds"),
+        DeclareLaunchArgument("imu_time_offset_sec", default_value="", description="Optional IMU timestamp offset; defaults to calib.yaml value or 0.0"),
         DeclareLaunchArgument("rviz_enable", default_value="true", description="Open RViz2"),
     ]
     bool_parameter = lambda name: ParameterValue(LaunchConfiguration(name), value_type=bool)

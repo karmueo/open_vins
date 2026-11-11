@@ -26,7 +26,9 @@ ros2 run openvins_slam slam_from_bag --ros-args \
   -p realtime:=false -p imu_time_offset_sec:=0.025
 ```
 
-示例中的 `+0.025 s` 是对该数据包的经验时间校正；不提供此参数时，节点仍使用标定文件中的时间偏移。该校正不会修改标定文件或原包，具体依据见下文。
+示例中的 `+0.025 s` 是对该数据包的经验时间校正；不提供此参数时，节点使用标定文件中的 `ROS.ImuTimeOffsetSec`，若标定文件未设置该字段则使用 `0.0`。该校正不会修改标定文件或原包，具体依据见下文。
+
+`cameras` 可以省略。此时节点会在输入 MCAP 同级目录查找 `calib.yaml`；若未找到，会报错并提示如何显式指定标定文件。
 
 `outbag` 为单个 MCAP 文件路径，不是目录；目标父目录不存在时会自动创建，已存在的同名文件会在成功结束时被原子替换。成功后，包中包含输入的全部原始话题和估计得到的位姿、轨迹、里程计及 TF。MCAP 写入期间失败或中断时不会生成表示处理完成的目标文件；同时导出轨迹文本时的提交顺序和例外见下节。请预留足够磁盘空间，包含完整原始数据和轨迹的文件可能大于输入包。位姿、里程计及动态 TF 逐帧录制；三条完整 Path 仅在处理成功结束时各写入一条，消息时间和 MCAP 记录时间均为最后一次有效位姿的图像时间，避免重复录制历史轨迹导致文件按帧数平方增长。
 
@@ -39,7 +41,7 @@ ros2 run openvins_slam slam_from_bag --ros-args \
 
 ## 导出 TUM 轨迹
 
-离线或实时处理时加上 `-p save_trajectory:=true`（launch 使用 `save_trajectory:=true`），即可导出有效 IMU 位姿。默认关闭；开启时若不指定 `trajectory_file`，输出在输入 MCAP 同一目录，文件名的扩展名替换为 `.txt`。例如 `job_004.mcap` 对应 `job_004.txt`。也可使用 `-p trajectory_file:=/tmp/job_004_trajectory.txt` 显式指定路径。输出目录不存在时会自动创建，已存在的同名轨迹文件会在成功结束时被原子替换；轨迹文件不能与输入或输出 MCAP 相同。之前的 `trajectory_csv` 路径参数已移除，请改用 `trajectory_file`。
+离线或实时处理时加上 `-p save_trajectory:=true`（launch 使用 `save_trajectory:=true`），即可导出有效 IMU 位姿。默认关闭；开启时若不指定 `trajectory_file`，文件会写入 `outbag` 所在目录，名称为输入 MCAP 文件名（不含扩展名）加 `_openvins_trajectory.txt`。例如输入 `job_004.mcap`、输出包 `/tmp/job_004_openvins.mcap` 时，默认轨迹路径为 `/tmp/job_004_openvins_trajectory.txt`。实时模式未指定 `outbag` 时，使用输入 MCAP 所在目录。也可使用 `-p trajectory_file:=/tmp/job_004_trajectory.txt` 显式指定路径。输出目录不存在时会自动创建，已存在的同名轨迹文件会在成功结束时被原子替换；轨迹文件不能与输入或输出 MCAP 相同。之前的 `trajectory_csv` 路径参数已移除，请改用 `trajectory_file`。
 
 文件没有表头，每行以空格分隔，格式为 `timestamp tx ty tz qx qy qz qw`。每行对应一次有效视觉状态更新，轨迹坐标系是 `odom → imu`，平移单位为米；初始化或跳过的图像没有轨迹行。时间戳为对应图像原始 header 的绝对时间，单位秒并固定保留九位小数；时间由整数纳秒直接转换，不应用 IMU 时间偏移。
 
@@ -87,7 +89,7 @@ RViz2 默认关闭图像显示，以减少渲染开销。需要查看双目跟�
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `cameras` | 必填 | 标定文件路径。 |
+| `cameras` | 输入包同级目录的 `calib.yaml` | 标定文件路径；省略时自动查找，未找到则报错。 |
 | `in_bag` | 必填 | 输入 MCAP 文件路径。 |
 | `outbag` | 空 | 输出 MCAP 文件路径；离线模式必填，实时模式可选。 |
 | `realtime` | `false`（launch 默认 `true`） | `true` 按时间回放；`false` 尽快离线处理。 |
@@ -95,15 +97,15 @@ RViz2 默认关闭图像显示，以减少渲染开销。需要查看双目跟�
 | `imu_topic` | `/imu` | `sensor_msgs/msg/Imu` 话题。 |
 | `half_resolution` | `true` | 每目由 1920×1080 降为 960×540 后跟踪；不改变原包图像。 |
 | `apply_imu_bias` | `true` | 对估计输入预减标定偏置；若数据已扣偏置可设为 `false`。 |
-| `imu_time_offset_sec` | 不覆盖 | 显式指定计算用 IMU 时间偏移，单位秒；未提供时使用 `calib.yaml` 的 `ROS.ImuTimeOffsetSec`。 |
+| `imu_time_offset_sec` | `calib.yaml` 中的 `ROS.ImuTimeOffsetSec`；若无则为 `0.0` | 显式指定计算用 IMU 时间偏移，单位秒；显式传入时优先于标定文件值。 |
 | `record_debug` | `false` | 同时将跟踪图和稀疏点写入输出包，可能明显增加文件体积。 |
 | `save_trajectory` | `false` | 将有效 IMU 位姿写为 TUM 格式文本。 |
-| `trajectory_file` | 空 | 轨迹输出路径；为空时使用输入 MCAP 同目录同名 `.txt`。 |
+| `trajectory_file` | 空 | 轨迹输出路径；为空时使用 `outbag` 同目录及输入包文件名加 `_openvins_trajectory.txt`；未设置 `outbag` 时使用输入包目录。 |
 | `rviz_enable` | `true` | launch 参数：是否启动 RViz2。 |
 
-当前输入约定为一条 JPEG 压缩图像话题，每帧横向拼接两幅图，左半为 cam0、右半为 cam1；IMU 的角速度和加速度分别使用 rad/s 和 m/s²。标定中的平移按毫米转米，陀螺偏置按 deg/s 转 rad/s。标定文件指定的 IMU 时间偏移应用于计算副本；输出包保留原始时间和消息。
+当前输入约定为一条 JPEG 压缩图像话题，每帧横向拼接两幅图，左半为 cam0、右半为 cam1；IMU 的角速度和加速度分别使用 rad/s 和 m/s²。标定中的平移按毫米转米，陀螺偏置按 deg/s 转 rad/s。传入的 `imu_time_offset_sec` 应用于计算副本；输出包保留原始时间和消息。
 
-采集器源码的子模块在现有导出目录中缺失，无法最终确认采集端是否已经应用固定时间偏移。对 `job_004.mcap`，使用标定文件中的约 **−5.089 ms** 偏移时观测到轨迹严重发散；独立使用全包双目 PnP 与陀螺仪数据进行时间对齐诊断，最低旋转误差对应的偏移约为 **+25～30 ms**；示例采用已经完整运行验证的 +25 ms。该范围是传感器一致性诊断，并非精确真值或带真值的定位精度验证。对其他数据请重新核对采集端时间和偏置约定，不要直接沿用该诊断值。某些末尾图像可能缺少足够 IMU 覆盖，程序会报告并跳过这些帧。
+采集器源码的子模块在现有导出目录中缺失，无法最终确认采集端是否已经应用固定时间偏移。对 `job_004.mcap`，显式传入标定值约 **−5.089 ms** 时观测到轨迹严重发散；独立使用全包双目 PnP 与陀螺仪数据进行时间对齐诊断，最低旋转误差对应的偏移约为 **+25～30 ms**；示例采用已经完整运行验证的 +25 ms。该范围是传感器一致性诊断，并非精确真值或带真值的定位精度验证。对其他数据请重新核对采集端时间和偏置约定，不要直接沿用该诊断值。某些末尾图像可能缺少足够 IMU 覆盖，程序会报告并跳过这些帧。
 
 ## 结果话题
 

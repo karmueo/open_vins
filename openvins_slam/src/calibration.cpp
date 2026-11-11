@@ -60,9 +60,12 @@ Calibration Calibration::load(const std::string &path) {
     throw std::runtime_error("the two cameras must have the same dimensions");
   c.accel_bias = vector<3>(root["imu"]["accelerometer_bias"], "imu.accelerometer_bias");
   c.gyro_bias = vector<3>(root["imu"]["gyroscope_bias"], "imu.gyroscope_bias") * (M_PI / 180.0);
-  if (!root["ROS.ImuTimeOffsetSec"]) throw std::runtime_error("missing ROS.ImuTimeOffsetSec");
-  c.imu_time_offset = root["ROS.ImuTimeOffsetSec"].as<double>();
-  if (!std::isfinite(c.imu_time_offset) || std::abs(c.imu_time_offset) > 10) throw std::runtime_error("invalid IMU time offset");
+  const YAML::Node imu_time_offset = root["ROS.ImuTimeOffsetSec"];
+  if (imu_time_offset && !imu_time_offset.IsNull()) {
+    c.imu_time_offset = imu_time_offset.as<double>();
+    if (!std::isfinite(c.imu_time_offset) || std::abs(c.imu_time_offset) > 10)
+      throw std::runtime_error("invalid IMU time offset");
+  }
   c.gyro_noise = positive(root, "gyroscope_noise_density");
   c.gyro_walk = positive(root, "gyroscope_random_walk");
   c.accel_noise = positive(root, "accelerometer_noise_density");

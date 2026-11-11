@@ -26,7 +26,7 @@ protected:
 };
 
 TEST_F(TrajectoryWriterTest, RecordsExactImageTimesAndTumPosesWithoutHeader) {
-  const auto trajectory_path = directory_ + "/input.txt";
+  const auto trajectory_path = directory_ + "/input_openvins_trajectory.txt";
   geometry_msgs::msg::Pose pose;
   pose.position.x = 0.1;
   pose.position.y = -2.0;
@@ -57,6 +57,27 @@ TEST_F(TrajectoryWriterTest, RecordsExactImageTimesAndTumPosesWithoutHeader) {
   EXPECT_EQ(row, "1793850306.000000000 0.10000000000000001 -2 3.5 0.125 -0.25 0.5 1");
   std::getline(file, extra);
   EXPECT_TRUE(extra.empty());
+}
+
+TEST_F(TrajectoryWriterTest, DefaultsBesideOutputBagUsingInputStem) {
+  const auto input_dir = directory_ + "/input";
+  const auto output_dir = directory_ + "/output";
+  fs::create_directories(input_dir);
+  const auto input_path = input_dir + "/job_004.mcap";
+  std::ofstream(input_path) << "input";
+  const auto output_path = output_dir + "/job_004_openvins.mcap";
+  const auto trajectory_path = output_dir + "/job_004_openvins_trajectory.txt";
+
+  openvins_slam::TrajectoryWriter trajectory("", input_path, output_path);
+  EXPECT_EQ(trajectory.path(), trajectory_path);
+  EXPECT_TRUE(fs::is_directory(output_dir));
+  EXPECT_FALSE(fs::exists(trajectory_path));
+}
+
+TEST_F(TrajectoryWriterTest, DefaultsBesideInputWhenOutputBagIsNotSpecified) {
+  const auto trajectory_path = directory_ + "/input_openvins_trajectory.txt";
+  openvins_slam::TrajectoryWriter trajectory("", input_, "");
+  EXPECT_EQ(trajectory.path(), trajectory_path);
 }
 
 TEST_F(TrajectoryWriterTest, RejectsSelfConflictsAndSymlinkAliases) {

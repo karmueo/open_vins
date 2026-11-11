@@ -25,11 +25,17 @@ fs::path resolved(const fs::path &path) {
   return fs::weakly_canonical(fs::absolute(path));
 }
 
+fs::path default_trajectory_path(const std::string &input_path, const std::string &output_path) {
+  const fs::path input(input_path);
+  const fs::path directory = output_path.empty() ? input.parent_path() : fs::path(output_path).parent_path();
+  return directory / (input.stem().string() + "_openvins_trajectory.txt");
+}
+
 } // namespace
 
 TrajectoryWriter::TrajectoryWriter(const std::string &requested_path, const std::string &input_path,
                                    const std::string &output_path) {
-  fs::path path = requested_path.empty() ? fs::path(input_path).replace_extension(".txt") : fs::path(requested_path);
+  fs::path path = requested_path.empty() ? default_trajectory_path(input_path, output_path) : fs::path(requested_path);
   if (path.empty() || path.filename().empty()) throw std::runtime_error("invalid trajectory file path");
   output_ = path.string();
   if (resolved(path) == resolved(input_path))

@@ -6,7 +6,9 @@
 
 ROS2 Jazzy 构建、完整 MCAP 保真处理、位姿与协方差转换、离线/实时一致性、标准 ROS2 回放、RViz2 显示及错误清理检查通过。
 
-**本数据包的验收采用显式参数 `imu_time_offset_sec:=0.025`。** 用户原始 `calib.yaml` 和 `job_004.mcap` 没有被修改。未传此参数时，程序仍严格读取标定文件中的 `ROS.ImuTimeOffsetSec`。
+**本数据包的验收采用显式参数 `imu_time_offset_sec:=0.025`。** 用户原始 `calib.yaml` 和 `job_004.mcap` 没有被修改。显式传入的参数优先于标定文件值；未传时使用标定文件中的 `ROS.ImuTimeOffsetSec`，字段缺失时使用 `0.0`。
+
+> 行为变更（2026-11-11）：恢复未传 `imu_time_offset_sec` 时采用标定文件值的行为；标定字段仍为可选，缺失时回退到 `0.0`。此前曾改为始终使用 `0.0`。
 
 原标定约 −5.089 ms 的时间修正在本包上导致严重发散。独立使用双目深度、PnP 视觉旋转和 IMU 积分进行对齐，在 20/60/160 ms 视觉时间窗口和不同采集时段中，较好的修正值均落在 +25～30 ms 附近。60 ms 窗口的旋转误差中位数由约 1.53° 降为约 0.14°。这说明本包的有效时间关系与提供的标定不一致，但缺少采集器子模块源码，尚不能确定偏差产生于哪个采集环节。
 
@@ -121,6 +123,6 @@ ros2 run openvins_slam slam_from_bag --ros-args \
 - 位姿数值逐行与 `/openvins/odom` 精确一致。本轮修改前保存的二进制与新版本输出的 16288 条消息，其话题、时间戳、序号及解码字段一致，原始消息内容逐字节一致。
 - 实时与离线 TUM 文件逐字节一致；实时 EOF 保持展示后文件不增长。未启动 RViz。
 - 默认关闭不产生轨迹文件；已有目标、父目录缺失、输入或输出路径冲突、无法创建目标明确失败。SIGINT 中断及文件大小限制模拟的中途写入失败均清理临时文件，不留下最终轨迹文件。
-- 构建安装和四个 CTest 目标通过，安装版 launch 参数为 `save_trajectory` 和 `trajectory_file`；路径默认值为空。旧 CSV 路径参数不再提供。
+- 构建安装和四个 CTest 目标通过，安装版 launch 参数为 `save_trajectory` 和 `trajectory_file`；`trajectory_file` 参数默认值为空，空路径时优先在 `outbag` 目录按输入文件名生成 `_openvins_trajectory.txt`，未指定 `outbag` 时使用输入包目录。旧 CSV 路径参数不再提供。
 
 独立验收脚本与日志位于 `/tmp/openvins_tum_acceptance/`。此前生成的 CSV 文件未修改。
