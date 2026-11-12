@@ -87,6 +87,8 @@ public:
       : node_(node), calibration_(calibration), realtime_(realtime), apply_bias_(apply_bias),
         record_debug_(record_debug), imu_topic_(imu_topic), stereo_topic_(stereo_topic), output_(output), trajectory_(trajectory) {
     auto options = calibration_.make_options(half_resolution);
+    options.try_zupt = node_->declare_parameter<bool>("try_zupt", options.try_zupt);
+    RCLCPP_INFO(node_->get_logger(), "ZUPT %s", options.try_zupt ? "enabled" : "disabled");
     manager_ = std::make_unique<ov_msckf::VioManager>(options);
     auto regular = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
     for (int i = 0; i < 3; ++i) {

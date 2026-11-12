@@ -38,6 +38,11 @@ def _make_vio_node(context):
         if not math.isfinite(offset_value):
             raise ValueError("imu_time_offset_sec must be a finite number of seconds")
         parameters["imu_time_offset_sec"] = offset_value
+    zupt = LaunchConfiguration("try_zupt").perform(context).strip().lower()
+    if zupt:
+        if zupt not in ("true", "false"):
+            raise ValueError("try_zupt must be true or false")
+        parameters["try_zupt"] = zupt == "true"
     return [Node(
         package="openvins_slam",
         executable="slam_from_bag",
@@ -61,6 +66,7 @@ def generate_launch_description():
         DeclareLaunchArgument("stereo_topic", default_value="/stereo/image_raw", description="Compressed stereo input topic"),
         DeclareLaunchArgument("imu_topic", default_value="/imu", description="IMU input topic"),
         DeclareLaunchArgument("imu_time_offset_sec", default_value="", description="Optional IMU timestamp offset; defaults to calib.yaml value or 0.0"),
+        DeclareLaunchArgument("try_zupt", default_value="", description="Optional ZUPT override; defaults to estimator config"),
         DeclareLaunchArgument("rviz_enable", default_value="true", description="Open RViz2"),
     ]
     bool_parameter = lambda name: ParameterValue(LaunchConfiguration(name), value_type=bool)

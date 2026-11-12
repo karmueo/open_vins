@@ -69,6 +69,8 @@ ros2 run openvins_slam slam_from_bag \
 
 可省略 `cameras` 和 `trajectory_file`，按下表自动选取路径；父目录不存在时自动创建。成功的离线处理打印 `PERFORMANCE`，其中 `average_fps` 包含读写解码，`slam_average_fps` 仅统计估计器调用耗时。参数依据：[节点实现](openvins_slam/src/main.cpp)、[轨迹写入实现](openvins_slam/src/trajectory_writer.cpp)。
 
+需要启用零速度更新时，在命令末尾追加 `-p try_zupt:=true`；未传时使用估计器配置值。
+
 <a id="6-参数速查"></a>
 
 | 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
@@ -81,6 +83,7 @@ ros2 run openvins_slam slam_from_bag \
 | `save_trajectory` | 开启 TUM 导出 | 行为控制项 | 默认 `false`；支持 `true`、`false` |
 | `trajectory_file` | 指定 TUM 路径 | 输出文件 | 默认空：在 `outbag` 同目录生成 `<输入包名去扩展名>_openvins_trajectory.txt`；未设 `outbag` 时用输入包目录；不得与输入或输出 MCAP 同路径 |
 | `imu_time_offset_sec` | 覆盖计算用 IMU 时间偏移（秒） | 输入值 | 默认标定的 `ROS.ImuTimeOffsetSec`，缺失时 `0.0`；支持有限数值，范围 `[-10, 10]` |
+| `try_zupt` | 覆盖估计器的零速度更新开关 | 行为控制项 | 默认估计器配置值（当前 `false`）；支持 `true`、`false` |
 | `half_resolution` | 每目宽高减半后跟踪 | 行为控制项 | 默认 `true`；支持 `true`、`false`；如 1920×1080 → 960×540 |
 | `apply_imu_bias` | 预减标定偏置 | 行为控制项 | 默认 `true`；支持 `true`、`false`；输入已扣偏置时设 `false` |
 | `record_debug` | 将跟踪图与稀疏点写包，会增大体积 | 行为控制项 | 默认 `false`；支持 `true`、`false` |
