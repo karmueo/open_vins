@@ -81,9 +81,6 @@ ov_msckf::VioManagerOptions Calibration::make_options(bool half_resolution) cons
   if (!parser->successful()) throw std::runtime_error("cannot load baseline OpenVINS estimator configuration: " + path);
 
   p.state_options.num_cameras = 2;
-  p.state_options.do_calib_camera_pose = false;
-  p.state_options.do_calib_camera_intrinsics = false;
-  p.state_options.do_calib_camera_timeoffset = false;
   p.state_options.do_calib_imu_intrinsics = false;
   p.state_options.do_calib_imu_g_sensitivity = false;
   p.calib_camimu_dt = 0;

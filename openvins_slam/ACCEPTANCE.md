@@ -126,3 +126,51 @@ ros2 run openvins_slam slam_from_bag --ros-args \
 - 构建安装和四个 CTest 目标通过，安装版 launch 参数为 `save_trajectory` 和 `trajectory_file`；`trajectory_file` 参数默认值为空，空路径时优先在 `outbag` 目录按输入文件名生成 `_openvins_trajectory.txt`，未指定 `outbag` 时使用输入包目录。旧 CSV 路径参数不再提供。
 
 独立验收脚本与日志位于 `/tmp/openvins_tum_acceptance/`。此前生成的 CSV 文件未修改。
+
+
+## 视觉参数与在线相机标定增量验收（2026-11-12）
+
+当前入口默认遵循估计器配置，开启相机内参、外参及时间偏移在线标定。前文的固定标定实测属于历史行为；现在可以显式关闭三个 `calib_cam_*` 参数复现。视觉参数默认数值保留，增强配置仅作为实验示例。IMU 内参、重力敏感项及动态初始化中的标定优化仍关闭。
+
+使用现有 15 秒片段比较修改前二进制与三项在线标定显式关闭的新节点：524 行 TUM 逐字节一致，2,621 条 Pose、odom、TF 的时间、位姿、速度及协方差逐字段比较，最大数值差为 0。固定标定和默认在线标定均得到 524 组有效位姿，13,664 条原消息保真，三组最终 Path 与逐帧位姿一致。在线标定相机边仅存在于动态 `/tf`，关闭时仅存在于 `/tf_static`；逐时刻验证两目 TF 与输出相机位姿一致。
+
+完整实包为 `/data/scl_data/slam/stereo_live_bags/EGO/400hz/job_004.mcap`，固定修正均显式传入 `imu_time_offset_sec:=0.025`，使用默认半分辨率。两组均开启三项在线相机标定，顺序运行：
+
+| 指标 | 默认视觉配置 | 增强视觉配置 |
+| --- | ---: | ---: |
+| `num_pts` / `init_max_features` | 200 / 50 | 400 / 100 |
+| `max_clones` / `max_slam` / `max_msckf_in_update` | 11 / 50 / 40 | 15 / 100 / 80 |
+| 处理双目图像对 | 3,234 | 3,234 |
+| 原始消息保真 | 59,084 | 59,084 |
+| 有效位姿数 | 3,011 | 3,003 |
+| IMU 首尾覆盖不足跳过数 | 0 | 0 |
+| 累计接受 MSCKF 特征数 | 6,958 | 9,512 |
+| 有 MSCKF 更新的帧数 | 1,919 | 2,510 |
+| SLAM 特征峰值 | 50 | 100 |
+| 总耗时（秒） | 70.730977 | 120.273397 |
+| 估计器计算耗时（秒） | 44.300714 | 97.206047 |
+| 最终在线时间残差 d（秒） | −0.00262617027112 | −0.00262582991929 |
+| 等效原始 IMU 修正 s−d（秒） | 0.0276261702711 | 0.0276258299193 |
+
+增强配置的初始化比默认配置晚约 0.160 秒，因此有效位姿少 8 组；没有因为 IMU 覆盖而丢帧。两组均通过更新后的 `verify_mcap.py`，确认原消息、三组位姿、协方差、Path、odom 与动态相机 TF 一致。更高的接受特征数不能替代真值精度评测；这里没有 ATE/RPE 提升结论，耗时仅代表本机此次测量。
+
+验证证据保存在 `/tmp/openvins_online_validation/`：`before.*`、`fixed.*` 和 `online.*` 为短包对照；`full_baseline.*`、`full_enhanced.*` 为完整实包对照。每组日志的 `FINAL_CALIBRATION` 包含两目在 960×540 跟踪分辨率下的最终 8 维内参及 `q_ItoC, p_IinC` 外参。输入标定和原始包未被修改。
+
+最终构建安装通过，四个 CTest 目标全部通过，`colcon test-result` 汇总为 26 tests、0 errors、0 failures、0 skipped。新增测试覆盖参数继承与覆盖、非法数值和类型、会产生空网格的跟踪参数、正负时间残差的等待/插值/历史保留、传播倒退及非有限残差。在线外参测试对 IMU 和外参共 21 维扰动做有限差分，并用包含交叉项的联合协方差验证输出。
+
+独立逐行核对固定/在线短包和两组完整包：每行 TUM 与同时间戳 odom 数值完全一致；三组实际位姿协方差及 odom 速度协方差均对称、半正定（最小特征值容差 −1e−9）。六类非法参数的命令行检查保留已有输出文件且不创建临时文件；最终安装版另行验证超出跟踪图像短边的 `min_px_dist` 在输出创建前失败。
+
+launch 检查覆盖空值不传递、整数/小数/布尔转换及非法值提示。使用最终安装版实际运行 `ros2 launch openvins_slam bag_slam.launch.py`、`realtime:=true`、`rviz_enable:=false` 和显式视觉/标定参数：EOF 正常提交，SIGINT 干净退出，13,664 条原消息保真，524 行 TUM 与离线默认在线标定逐字节一致，动态相机 TF 检查通过。本次未启动 RViz。
+
+
+## 统一输出配置与 RViz2 验收（2026-11-13）
+
+节点与两个 MCAP launch 已统一使用必填 `outdir`、默认关闭的 `save_mcap` 和 `rviz2`。TUM 始终写出，文件名包含输入包 stem 和原始参数 YAML stem；无 YAML 的逐项调用保留空配置名和下划线。旧输出参数与旧 `rviz_enable` 不再接受。此前章节中的旧接口命令属于历史验收记录，当前用法见 README。
+
+最终构建通过，五个 CTest 目标全部通过（四个 gtest 目标和一个含六项检查的 Python launch 测试）。新增覆盖输出命名、空配置名、可选 MCAP、原始 YAML/符号链接文件名、两份随包配置默认值、显示与速度分离，以及非法布尔值和旧 launch 参数拒绝。
+
+使用现有 15 秒短包 `/tmp/openvins_tum_acceptance/short.mcap`、400Hz 标定与 `+0.025 s` 固定时间修正，显式固定三项在线相机标定。四种 `realtime × rviz2` 组合均处理 747 对图像、生成 524 行 TUM；四份轨迹逐字节一致，四份输出 MCAP 均通过 `verify_mcap.py` 的原消息、位姿、轨迹、里程计和 TF 校验。开启显示或按时间回放时，独立 ROS 订阅器收到完整 Path、图像、TF 和 `/clock`，EOF 后节点继续保持，SIGINT 后正常退出。
+
+只输出 TUM 的直接运行成功，未生成 MCAP；与上述参考结果的 524 个时间戳完全一致，位姿数值最大绝对差约 `1.3e-7`。直接 `--params-file` 正确使用实际 YAML 名称；逐项 launch 不使用 ROS 临时参数文件名。空输出目录、非法布尔值、旧参数及指向输入的输出符号链接均拒绝；中断保留已有目标文件，未留下临时文件或未完成的 MCAP。
+
+两个 launch 的 RViz 启动均在 Xvfb 环境检查。最终逐项 launch 的离线显示截图中 `Global Status: Ok`，三条轨迹、位姿与稀疏点正常显示；EOF 后仅一个可见 RViz 主窗口保持。验证日志、四模式汇总及截图位于 `/tmp/openvins_output_validation/`，截图为 `rviz.png`；执行脚本为 `/tmp/openvins_validate_modes.py`、`/tmp/openvins_validate_rest.py` 和 `/tmp/openvins_gui_check.py`。验收脚本按 ROS 节点参数作用域配置直接 YAML 用例，没有假定通配命令行参数能够覆盖节点专属 YAML 项。

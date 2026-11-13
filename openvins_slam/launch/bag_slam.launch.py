@@ -11,20 +11,28 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+INTEGER_OPTIONS = ("num_pts", "init_max_features", "max_clones", "max_slam",
+                   "max_slam_in_update", "max_msckf_in_update", "fast_threshold", "grid_x", "grid_y")
+CALIBRATION_OPTIONS = ("calib_cam_intrinsics", "calib_cam_extrinsics", "calib_cam_timeoffset")
+
 
 def _make_vio_node(context):
+    for legacy in ("outbag", "trajectory_file", "save_trajectory", "rviz_enable"):
+        if legacy in context.launch_configurations:
+            raise ValueError(f"removed launch argument {legacy}; use outdir, save_mcap and rviz2")
     bool_parameter = lambda name: ParameterValue(LaunchConfiguration(name), value_type=bool)
     string_parameter = lambda name: ParameterValue(LaunchConfiguration(name), value_type=str)
     parameters = {
         "cameras": string_parameter("cameras"),
         "in_bag": string_parameter("in_bag"),
-        "outbag": string_parameter("outbag"),
+        "outdir": string_parameter("outdir"),
+        "config_name": "",
+        "save_mcap": bool_parameter("save_mcap"),
+        "rviz2": bool_parameter("rviz2"),
         "realtime": bool_parameter("realtime"),
         "half_resolution": bool_parameter("half_resolution"),
         "apply_imu_bias": bool_parameter("apply_imu_bias"),
         "record_debug": bool_parameter("record_debug"),
-        "save_trajectory": bool_parameter("save_trajectory"),
-        "trajectory_file": string_parameter("trajectory_file"),
         "stereo_topic": string_parameter("stereo_topic"),
         "imu_topic": string_parameter("imu_topic"),
         "use_sim_time": bool_parameter("realtime"),
@@ -43,6 +51,19 @@ def _make_vio_node(context):
         if zupt not in ("true", "false"):
             raise ValueError("try_zupt must be true or false")
         parameters["try_zupt"] = zupt == "true"
+    for name in INTEGER_OPTIONS + ("min_px_dist",) + CALIBRATION_OPTIONS:
+        value = LaunchConfiguration(name).perform(context).strip()
+        if not value:
+            continue
+        if name in CALIBRATION_OPTIONS:
+            if value.lower() not in ("true", "false"):
+                raise ValueError(f"{name} must be true or false")
+            parameters[name] = value.lower() == "true"
+        else:
+            try:
+                parameters[name] = float(value) if name == "min_px_dist" else int(value)
+            except ValueError as exc:
+                raise ValueError(f"{name} must be {'numeric' if name == 'min_px_dist' else 'an integer'}") from exc
     return [Node(
         package="openvins_slam",
         executable="slam_from_bag",
@@ -56,29 +77,30 @@ def generate_launch_description():
     arguments = [
         DeclareLaunchArgument("cameras", default_value="", description="Path to calib.yaml; defaults to calib.yaml beside the input MCAP"),
         DeclareLaunchArgument("in_bag", description="Path to the input MCAP file"),
-        DeclareLaunchArgument("outbag", default_value="", description="Optional output MCAP path"),
+        DeclareLaunchArgument("outdir", description="Output directory for TUM and optional MCAP"),
+        DeclareLaunchArgument("save_mcap", default_value="false", description="Save original messages and results to MCAP"),
         DeclareLaunchArgument("realtime", default_value="true", description="Replay at the recorded rate"),
         DeclareLaunchArgument("half_resolution", default_value="true", description="Track at half camera resolution"),
         DeclareLaunchArgument("apply_imu_bias", default_value="true", description="Subtract calibrated IMU bias"),
         DeclareLaunchArgument("record_debug", default_value="false", description="Store tracking image and points"),
-        DeclareLaunchArgument("save_trajectory", default_value="false", description="Save IMU trajectory in TUM format"),
-        DeclareLaunchArgument("trajectory_file", default_value="", description="Optional TUM path; defaults beside input MCAP"),
         DeclareLaunchArgument("stereo_topic", default_value="/stereo/image_raw", description="Compressed stereo input topic"),
         DeclareLaunchArgument("imu_topic", default_value="/imu", description="IMU input topic"),
         DeclareLaunchArgument("imu_time_offset_sec", default_value="", description="Optional IMU timestamp offset; defaults to calib.yaml value or 0.0"),
         DeclareLaunchArgument("try_zupt", default_value="", description="Optional ZUPT override; defaults to estimator config"),
-        DeclareLaunchArgument("rviz_enable", default_value="true", description="Open RViz2"),
+        DeclareLaunchArgument("rviz2", default_value="false", description="Open RViz2"),
     ]
     bool_parameter = lambda name: ParameterValue(LaunchConfiguration(name), value_type=bool)
     config = os.path.join(get_package_share_directory("openvins_slam"), "launch", "bag_slam.rviz")
+    arguments += [DeclareLaunchArgument(name, default_value="", description="Optional override; defaults to estimator config")
+                  for name in INTEGER_OPTIONS + ("min_px_dist",) + CALIBRATION_OPTIONS]
 
     rviz = Node(
         package="rviz2",
         executable="rviz2",
         name="openvins_rviz",
-        condition=IfCondition(LaunchConfiguration("rviz_enable")),
+        condition=IfCondition(LaunchConfiguration("rviz2")),
         arguments=["-d", config],
-        parameters=[{"use_sim_time": bool_parameter("realtime")}],
+        parameters=[{"use_sim_time": True}],
         output="screen",
     )
     return LaunchDescription(arguments + [OpaqueFunction(function=_make_vio_node), rviz])

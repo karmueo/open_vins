@@ -21,6 +21,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rcl/arguments.h>
 #include <rclcpp/serialization.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
@@ -36,6 +37,9 @@
 #include "openvins_slam/mcap_io.hpp"
 #include "openvins_slam/snapshot.hpp"
 #include "openvins_slam/trajectory_writer.hpp"
+#include "openvins_slam/runtime_options.hpp"
+#include "openvins_slam/imu_window.hpp"
+#include "openvins_slam/output_paths.hpp"
 
 namespace openvins_slam {
 namespace {
@@ -68,12 +72,6 @@ void write_message(McapOutput *out, const std::string &topic, const std::string 
   out->write_serialized(topic, type, serialized, static_cast<uint64_t>(time_ns));
 }
 
-struct ImuSample {
-  int64_t ns;
-  Eigen::Vector3d gyro;
-  Eigen::Vector3d accel;
-};
-
 struct CameraSample {
   int64_t ns;
   sensor_msgs::msg::CompressedImage image;
@@ -82,13 +80,13 @@ struct CameraSample {
 class BagProcessor {
 public:
   BagProcessor(const rclcpp::Node::SharedPtr &node, const Calibration &calibration, bool realtime,
-               bool apply_bias, bool record_debug, const std::string &imu_topic, const std::string &stereo_topic,
-               McapOutput *output, TrajectoryWriter *trajectory, bool half_resolution)
-      : node_(node), calibration_(calibration), realtime_(realtime), apply_bias_(apply_bias),
+               bool visualize, bool apply_bias, bool record_debug, const std::string &imu_topic, const std::string &stereo_topic,
+               McapOutput *output, TrajectoryWriter *trajectory, ov_msckf::VioManagerOptions options)
+      : node_(node), calibration_(calibration), realtime_(realtime), publish_results_(realtime || visualize), apply_bias_(apply_bias),
         record_debug_(record_debug), imu_topic_(imu_topic), stereo_topic_(stereo_topic), output_(output), trajectory_(trajectory) {
-    auto options = calibration_.make_options(half_resolution);
-    options.try_zupt = node_->declare_parameter<bool>("try_zupt", options.try_zupt);
-    RCLCPP_INFO(node_->get_logger(), "ZUPT %s", options.try_zupt ? "enabled" : "disabled");
+    online_time_ = options.state_options.do_calib_camera_timeoffset;
+    online_extrinsics_ = options.state_options.do_calib_camera_pose;
+    init_window_time_ = options.init_options.init_window_time;
     manager_ = std::make_unique<ov_msckf::VioManager>(options);
     auto regular = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
     for (int i = 0; i < 3; ++i) {
@@ -102,7 +100,7 @@ public:
     image_publisher_ = node_->create_publisher<sensor_msgs::msg::Image>("/openvins/tracking_image", regular);
     points_publisher_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/openvins/points", regular);
     clock_publisher_ = node_->create_publisher<rosgraph_msgs::msg::Clock>("/clock", rclcpp::QoS(1).reliable());
-    if (realtime_) node_->set_parameter(rclcpp::Parameter("use_sim_time", true));
+    if (publish_results_) node_->set_parameter(rclcpp::Parameter("use_sim_time", true));
     offset_ns_ = static_cast<int64_t>(std::llround(calibration_.imu_time_offset * kNanos));
     started_ = std::chrono::steady_clock::now();
   }
@@ -146,6 +144,17 @@ public:
               << " initialized_at_sensor_ns=" << initialization_ns_
               << " elapsed_seconds=" << std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count()
               << std::endl;
+    const auto state = manager_->get_state();
+    const double residual = state->_calib_dt_CAMtoIMU->value()(0);
+    std::cout << std::setprecision(12) << "FINAL_CALIBRATION fixed_imu_correction_sec=" << calibration_.imu_time_offset
+              << " residual_cam_to_corrected_imu_sec=" << residual
+              << " effective_raw_imu_correction_sec=" << calibration_.imu_time_offset - residual << '\n';
+    for (int i = 0; i < 2; ++i) {
+      const auto camera = state->_cam_intrinsics_cameras.at(i);
+      std::cout << "FINAL_CALIBRATION cam" << i << " tracking_resolution=" << camera->w() << 'x' << camera->h()
+                << " intrinsics=" << state->_cam_intrinsics.at(i)->value().transpose()
+                << " extrinsics_q_ItoC_p_IinC=" << state->_calib_IMUtoCAM.at(i)->value().transpose() << '\n';
+    }
   }
 
   void report_performance(std::chrono::steady_clock::duration total_duration) const {
@@ -218,6 +227,7 @@ private:
         (offset_ns_ < 0 && raw_ns < -offset_ns_)) throw std::runtime_error("IMU time offset overflows timestamp");
     ImuSample sample;
     sample.ns = raw_ns + offset_ns_;
+    if (imu_count_ == 1) first_imu_ns_ = sample.ns;
     sample.gyro = Eigen::Vector3d(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
     sample.accel = Eigen::Vector3d(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
     if (!sample.gyro.allFinite() || !sample.accel.allFinite()) throw std::runtime_error("non-finite IMU reading");
@@ -243,21 +253,33 @@ private:
 
   void process_ready() {
     while (!pending_.empty() && !imu_.empty()) {
-      const auto t = pending_.front().ns;
-      if (t < imu_.front().ns) {
+      const double residual = online_time_ ? manager_->get_state()->_calib_dt_CAMtoIMU->value()(0) : 0.0;
+      const auto t = imu_target_ns(pending_.front().ns, residual);
+      const auto coverage = imu_coverage(t, first_imu_ns_, imu_.front().ns, imu_.back().ns,
+                                         online_time_ && have_propagation_, last_propagation_ns_);
+      if (coverage == ImuCoverage::Early) {
         ++skipped_early_;
         pending_.pop_front();
         continue;
       }
-      if (imu_.back().ns <= t) break; // keep a real sample on each side for interpolation
-      while (imu_.size() > 2 && imu_[1].ns <= t) imu_.pop_front();
-      if (imu_.size() < 2 || imu_[0].ns > t || imu_[1].ns <= t) throw std::runtime_error("IMU bracketing failed");
-      const double alpha = double(t - imu_[0].ns) / double(imu_[1].ns - imu_[0].ns);
-      const Eigen::Vector3d gyro = (1.0 - alpha) * imu_[0].gyro + alpha * imu_[1].gyro;
-      const double dt = double(imu_[1].ns - imu_[0].ns) / kNanos;
-      const double gyro_var = ((1.0 - alpha) * (1.0 - alpha) + alpha * alpha) *
-                              calibration_.gyro_noise * calibration_.gyro_noise / dt;
-      process_image(pending_.front(), gyro, gyro_var);
+      if (coverage == ImuCoverage::Wait) break;
+      // Match the core's retained window; a later negative residual can require older readings.
+      int64_t retain = t;
+      if (online_time_) {
+        const auto state = manager_->get_state();
+        double oldest = state->margtimestep();
+        if (!manager_->initialized() || !std::isfinite(oldest))
+          oldest = double(t - anchor_ns_) / kNanos - init_window_time_ - 0.10;
+        retain = std::min(t, anchor_ns_ + static_cast<int64_t>(oldest * kNanos));
+      }
+      retain_imu_window(imu_, retain);
+      const auto gyro = interpolate_gyro(imu_, t, calibration_.gyro_noise);
+      process_image(pending_.front(), gyro.gyro, gyro.variance);
+      const auto state = manager_->get_state();
+      if (manager_->initialized() && std::abs(state->_timestamp - double(pending_.front().ns - anchor_ns_) / kNanos) < 1e-8) {
+        last_propagation_ns_ = t;
+        have_propagation_ = true;
+      }
       pending_.pop_front();
     }
   }
@@ -278,20 +300,21 @@ private:
     input.masks = {cv::Mat::zeros(height, width, CV_8UC1), cv::Mat::zeros(height, width, CV_8UC1)};
     measure_slam([&] { manager_->feed_measurement_camera(input); });
     ++fed_images_;
-    if (realtime_) {
+    if (publish_results_) {
       last_clock_.clock = ros_time(sample.ns);
       has_clock_ = true;
       clock_publisher_->publish(last_clock_);
     }
-    if (!has_static_tf_) {
+    if (!online_extrinsics_ && !has_static_tf_) {
       static_tf_ = make_static_tf(calibration_, sample.ns);
       has_static_tf_ = true;
       write_message(output_, "/tf_static", "tf2_msgs/msg/TFMessage", static_tf_, sample.ns);
-      if (realtime_) static_tf_publisher_->publish(static_tf_);
+      if (publish_results_) static_tf_publisher_->publish(static_tf_);
     }
-    if ((realtime_ || (output_ && record_debug_))) publish_debug(sample.ns);
+    if ((publish_results_ || (output_ && record_debug_))) publish_debug(sample.ns);
     if (!manager_->initialized()) return;
     auto state = manager_->get_state();
+    imu_target_ns(sample.ns, state->_calib_dt_CAMtoIMU->value()(0));
     if (std::abs(state->_timestamp - input.timestamp) > 1e-8) return;
     if (!initialization_ns_) initialization_ns_ = sample.ns;
     const auto accepted_features = manager_->get_good_features_MSCKF().size();
@@ -312,7 +335,7 @@ private:
     write_message(output_, "/openvins/odom", "nav_msgs/msg/Odometry", last_snapshot_.odom, sample.ns);
     write_message(output_, "/tf", "tf2_msgs/msg/TFMessage", last_snapshot_.tf, sample.ns);
     ++output_count_;
-    if (realtime_) publish_last();
+    if (publish_results_) publish_last();
   }
 
   void publish_debug(int64_t ns) {
@@ -323,7 +346,7 @@ private:
       h.stamp = ros_time(ns);
       last_image_ = *cv_bridge::CvImage(h, "bgr8", image).toImageMsg();
       has_image_ = true;
-      if (realtime_) image_publisher_->publish(last_image_);
+      if (publish_results_) image_publisher_->publish(last_image_);
       if (record_debug_) write_message(output_, "/openvins/tracking_image", "sensor_msgs/msg/Image", last_image_, ns);
     }
     double current_time = -1;
@@ -346,7 +369,7 @@ private:
     }
     last_points_ = std::move(cloud);
     has_points_ = true;
-    if (realtime_) points_publisher_->publish(last_points_);
+    if (publish_results_) points_publisher_->publish(last_points_);
     if (record_debug_) write_message(output_, "/openvins/points", "sensor_msgs/msg/PointCloud2", last_points_, ns);
   }
 
@@ -363,7 +386,10 @@ private:
 
   rclcpp::Node::SharedPtr node_;
   const Calibration calibration_;
-  bool realtime_, apply_bias_, record_debug_;
+  bool realtime_, publish_results_, apply_bias_, record_debug_;
+  bool online_time_ = false, online_extrinsics_ = false, have_propagation_ = false;
+  double init_window_time_ = 2.0;
+  int64_t first_imu_ns_ = 0, last_propagation_ns_ = 0;
   std::string imu_topic_, stereo_topic_;
   McapOutput *output_;
   TrajectoryWriter *trajectory_;
@@ -406,13 +432,34 @@ int main(int argc, char **argv) {
     auto node = std::make_shared<rclcpp::Node>("slam_from_bag");
     const auto cameras = node->declare_parameter<std::string>("cameras", "");
     const auto in_bag = node->declare_parameter<std::string>("in_bag", "");
-    const auto outbag = node->declare_parameter<std::string>("outbag", "");
+    const auto &overrides = node->get_node_parameters_interface()->get_parameter_overrides();
+    for (const auto *legacy : {"outbag", "trajectory_file", "save_trajectory", "rviz_enable"})
+      if (overrides.count(legacy))
+        throw std::runtime_error(std::string("removed parameter ") + legacy + "; use outdir, save_mcap and rviz2");
+    const auto outdir = node->declare_parameter<std::string>("outdir", "");
+    const bool save_mcap = node->declare_parameter<bool>("save_mcap", false);
+    const bool visualize = node->declare_parameter<bool>("rviz2", false);
+    std::string inferred_name;
+    if (!overrides.count("config_name")) {
+      const auto context = node->get_node_base_interface()->get_context()->get_rcl_context();
+      const auto allocator = rcl_get_default_allocator();
+      char **files = nullptr;
+      const int count = rcl_arguments_get_param_files_count(&context->global_arguments);
+      if (rcl_arguments_get_param_files(&context->global_arguments, allocator, &files) != RCL_RET_OK)
+        throw std::runtime_error("cannot read ROS parameter file names");
+      if (count > 0) inferred_name = std::filesystem::path(files[count - 1]).stem().string();
+      for (int i = 0; i < count; ++i) allocator.deallocate(files[i], allocator.state);
+      if (files) allocator.deallocate(files, allocator.state);
+    }
+    const auto config_name = node->declare_parameter<std::string>("config_name", inferred_name);
+    const auto paths = openvins_slam::output_paths(outdir, in_bag, config_name, save_mcap);
+    const auto &outbag = paths.mcap;
+    RCLCPP_INFO(node->get_logger(), "TUM trajectory: %s", paths.trajectory.c_str());
+    if (save_mcap) RCLCPP_INFO(node->get_logger(), "Output MCAP: %s", outbag.c_str());
     const bool realtime = node->declare_parameter<bool>("realtime", false);
     const bool half_resolution = node->declare_parameter<bool>("half_resolution", true);
     const bool apply_imu_bias = node->declare_parameter<bool>("apply_imu_bias", true);
     const bool record_debug = node->declare_parameter<bool>("record_debug", false);
-    const bool save_trajectory = node->declare_parameter<bool>("save_trajectory", false);
-    const auto trajectory_file = node->declare_parameter<std::string>("trajectory_file", "");
     const auto stereo_topic = node->declare_parameter<std::string>("stereo_topic", "/stereo/image_raw");
     const auto imu_topic = node->declare_parameter<std::string>("imu_topic", "/imu");
     if (in_bag.empty()) throw std::runtime_error("parameter in_bag is required");
@@ -427,7 +474,6 @@ int main(int argc, char **argv) {
       calibration_path = inferred_path.string();
       RCLCPP_INFO(node->get_logger(), "Parameter cameras not set; using calibration file: %s", calibration_path.c_str());
     }
-    if (!realtime && outbag.empty()) throw std::runtime_error("outbag is required when realtime=false");
     if (stereo_topic.empty() || imu_topic.empty() || stereo_topic == imu_topic) throw std::runtime_error("invalid input topic names");
     auto calibration = openvins_slam::Calibration::load(calibration_path);
     const double file_offset = calibration.imu_time_offset;
@@ -445,13 +491,15 @@ int main(int argc, char **argv) {
       RCLCPP_INFO(node->get_logger(), "Using IMU time correction: %.9f s (calibration value or 0.0 if absent)",
                   calibration.imu_time_offset);
     }
+    auto options = calibration.make_options(half_resolution);
+    openvins_slam::configure_options(*node, options);
     openvins_slam::McapInput input(in_bag);
     std::unique_ptr<openvins_slam::TrajectoryWriter> trajectory;
-    if (save_trajectory) trajectory = std::make_unique<openvins_slam::TrajectoryWriter>(trajectory_file, in_bag, outbag);
+    trajectory = std::make_unique<openvins_slam::TrajectoryWriter>(paths.trajectory, in_bag, outbag);
     std::unique_ptr<openvins_slam::McapOutput> output;
     if (!outbag.empty()) output = std::make_unique<openvins_slam::McapOutput>(outbag, in_bag, input);
-    openvins_slam::BagProcessor processor(node, calibration, realtime, apply_imu_bias, record_debug,
-                                          imu_topic, stereo_topic, output.get(), trajectory.get(), half_resolution);
+    openvins_slam::BagProcessor processor(node, calibration, realtime, visualize, apply_imu_bias, record_debug,
+                                          imu_topic, stereo_topic, output.get(), trajectory.get(), options);
     const auto processing_start = std::chrono::steady_clock::now();
     input.for_each([&](const mcap::MessageView &view) { return processor.consume(view); });
     if (!rclcpp::ok()) throw std::runtime_error("processing interrupted; output was not committed");
@@ -473,7 +521,7 @@ int main(int argc, char **argv) {
     }
     const auto processing_end = std::chrono::steady_clock::now();
     if (!realtime && rclcpp::ok()) processor.report_performance(processing_end - processing_start);
-    if (realtime) processor.hold();
+    if (realtime || visualize) processor.hold();
   } catch (const std::exception &e) {
     std::cerr << "slam_from_bag: " << e.what() << std::endl;
     result = rclcpp::ok() ? 1 : 130;

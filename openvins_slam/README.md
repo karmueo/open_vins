@@ -16,99 +16,141 @@ source install/setup.bash
 
 这些参数选择与系统 `cv_bridge` 一致的 OpenCV 和 Jazzy 使用的系统 Python，避免误用其他版本。新建终端运行命令前，需先加载 Jazzy 和工作区的 `setup.bash`。
 
-## 离线处理
+## 使用 YAML 处理 MCAP
+
+编辑 `config/slam_from_bag.yaml`，然后运行：
+
+```bash
+ros2 launch openvins_slam slam_from_bag.launch.py \
+  params_file:="$(pwd)/openvins_slam/config/slam_from_bag.yaml"
+```
+
+省略 `params_file` 时读取安装目录的配置副本；修改源码配置后可显式传入源码路径。
+
+```yaml
+slam_from_bag:
+  ros__parameters:
+    cameras: "/path/to/calib.yaml"
+    in_bag: "/path/to/job_002.mcap"
+    outdir: "/tmp/openvins_results"
+    save_mcap: false
+    rviz2: false
+    realtime: false
+```
+
+`outdir` 必填，目录不存在时自动创建。TUM 始终导出；`save_mcap: true` 时额外保存包含全部原始消息和定位结果的单个 MCAP。输入包和参数 YAML 均取去掉最后一个扩展名的文件名，例如 `job_002.mcap` 与 `slam_from_bag.yaml` 生成：
+
+- `openvins_job_002_slam_from_bag_trajectory.txt`
+- `openvins_job_002_slam_from_bag.mcap`（开启保存时）
+
+重命名或复制 YAML 会改变结果中的配置名；符号链接使用传入链接的名称。同名旧结果在成功结束后原子替换。失败或中断会清理未提交的临时输出。两种输出同时启用时，先准备轨迹、提交 MCAP、再提交轨迹；最后一步失败时保留已提交 MCAP，并报告路径。
+
+旧的 `outbag`、`trajectory_file`、`save_trajectory` 参数已移除，请改用 `outdir` 和 `save_mcap`。
+
+## RViz2 与处理速度
+
+YAML 设置 `rviz2: true` 会启动一个 RViz2 并显示轨迹、位姿、TF 和稀疏特征。跟踪图默认隐藏，需要时勾选 `Stereo feature tracks`。`record_debug` 仅控制调试数据是否写入 MCAP，不影响实时显示。
+
+`realtime: false` 尽快计算，`true` 按包内时间回放；开启 RViz 不改变此设置。启用显示或按时间回放时，节点发布 `/clock` 并使用仿真时间；处理结束先保存文件，再保持最后结果，按 Ctrl+C 退出。离线且关闭显示时，处理完成直接退出。`PERFORMANCE` 日志中的总时间包括启用的文件输出，不包括 EOF 后保持画面的时间；估计器时间只统计 IMU 和相机输入的计算调用。
+
+## 逐项传参
 
 ```bash
 ros2 run openvins_slam slam_from_bag --ros-args \
-  -p cameras:=/data/scl_data/slam/stereo_live_bags/EGO/400hz/calib.yaml \
-  -p in_bag:=/data/scl_data/slam/stereo_live_bags/EGO/400hz/job_004.mcap \
-  -p outbag:=/tmp/job_004_openvins.mcap \
-  -p realtime:=false -p imu_time_offset_sec:=0.025
+  -p cameras:=/path/to/calib.yaml -p in_bag:=/path/to/job_004.mcap \
+  -p outdir:=/tmp/openvins_results -p save_mcap:=true
 ```
 
-示例中的 `+0.025 s` 是对该数据包的经验时间校正；不提供此参数时，节点使用标定文件中的 `ROS.ImuTimeOffsetSec`，若标定文件未设置该字段则使用 `0.0`。该校正不会修改标定文件或原包，具体依据见下文。
+没有参数文件时配置名为空，生成 `openvins_job_004__trajectory.txt` 和 `openvins_job_004_.mcap`。直接运行时也可传 `--params-file /path/to/config.yaml`，配置名取最后一个参数文件名。内部 `config_name` 用于 launch 传递原始配置名，通常无需设置。直接运行节点的 `rviz2=true` 只启用发布和 EOF 保持，需要另行打开 RViz。
 
-需要启用 ZUPT 时，在命令末尾加 `-p try_zupt:=true`；未传时使用估计器配置中的值。launch 使用 `try_zupt:=true`。
-
-`cameras` 可以省略。此时节点会在输入 MCAP 同级目录查找 `calib.yaml`；若未找到，会报错并提示如何显式指定标定文件。
-
-`outbag` 为单个 MCAP 文件路径，不是目录；目标父目录不存在时会自动创建，已存在的同名文件会在成功结束时被原子替换。成功后，包中包含输入的全部原始话题和估计得到的位姿、轨迹、里程计及 TF。MCAP 写入期间失败或中断时不会生成表示处理完成的目标文件；同时导出轨迹文本时的提交顺序和例外见下节。请预留足够磁盘空间，包含完整原始数据和轨迹的文件可能大于输入包。位姿、里程计及动态 TF 逐帧录制；三条完整 Path 仅在处理成功结束时各写入一条，消息时间和 MCAP 记录时间均为最后一次有效位姿的图像时间，避免重复录制历史轨迹导致文件按帧数平方增长。
-
-离线输出包成功写入后，`PERFORMANCE` 行报告两种平均帧率。`processed_frames` 是实际送入估计器的双目图像对数（含初始化帧，不含跳过帧，一对计一帧）：
-
-- `total_seconds` 是开始遍历输入到所有启用的输出成功提交的耗时，包含读取、解码、计算、序列化、写包及启用时的轨迹文件写入；`average_fps` 为帧数除以该耗时。它不包含节点、标定和估计器的创建时间。
-- `slam_compute_seconds` 只累计向估计器送入 IMU 和相机数据的调用耗时，包含算法初始化，不包含调用外的图像解码和消息序列化；`slam_average_fps` 为帧数除以该耗时。
-
-比较结果时，应使用相同输入、参数、调试录制设置和相近的机器负载。实时模式以及失败或中断的运行不输出 `PERFORMANCE` 行。
-
-## 导出 TUM 轨迹
-
-离线或实时处理时加上 `-p save_trajectory:=true`（launch 使用 `save_trajectory:=true`），即可导出有效 IMU 位姿。默认关闭；开启时若不指定 `trajectory_file`，文件会写入 `outbag` 所在目录，名称为输入 MCAP 文件名（不含扩展名）加 `_openvins_trajectory.txt`。例如输入 `job_004.mcap`、输出包 `/tmp/job_004_openvins.mcap` 时，默认轨迹路径为 `/tmp/job_004_openvins_trajectory.txt`。实时模式未指定 `outbag` 时，使用输入 MCAP 所在目录。也可使用 `-p trajectory_file:=/tmp/job_004_trajectory.txt` 显式指定路径。输出目录不存在时会自动创建，已存在的同名轨迹文件会在成功结束时被原子替换；轨迹文件不能与输入或输出 MCAP 相同。之前的 `trajectory_csv` 路径参数已移除，请改用 `trajectory_file`。
-
-文件没有表头，每行以空格分隔，格式为 `timestamp tx ty tz qx qy qz qw`。每行对应一次有效视觉状态更新，轨迹坐标系是 `odom → imu`，平移单位为米；初始化或跳过的图像没有轨迹行。时间戳为对应图像原始 header 的绝对时间，单位秒并固定保留九位小数；时间由整数纳秒直接转换，不应用 IMU 时间偏移。
-
-与 TagSLAM 参考 CSV 比较时，应将 TUM 时间按十进制定点解析并还原为整数纳秒，再按参考 CSV 的 `timestamp_ns` 交集配对，而不是按行号配对或用浮点秒做精确匹配。时间对齐不等于空间坐标对齐：参考结果为 `map → rig`，需要另行处理坐标系和空间对齐。
-
-轨迹使用同目录临时文件，处理完成后同步落盘并原子替换同名文件。失败或完成前中断会清理临时轨迹文件；实时模式在输入结束后先提交文件，再保持最后画面。若同时输出 MCAP，先准备轨迹文件、再提交 MCAP、最后提交轨迹文件；如果最后一步失败，已完成的 MCAP 会保留，错误信息会报告其路径。
-
-处理结束后可回放并在另一终端中使用同一 RViz 配置：
-
-```bash
-ros2 bag play /tmp/job_004_openvins.mcap --clock
-```
-
-```bash
-rviz2 -d "$(ros2 pkg prefix --share openvins_slam)/launch/bag_slam.rviz" \
-  --ros-args -p use_sim_time:=true
-```
-
-也可对照输入包检查输出的原始消息与定位结果。此工具需要当前 Python 环境中安装 `mcap` 和 `mcap-ros2-support`：
-
-```bash
-ros2 run openvins_slam verify_mcap.py \
-  /data/scl_data/slam/stereo_live_bags/EGO/400hz/job_004.mcap \
-  /tmp/job_004_openvins.mcap
-```
-
-输入包中的 `/cam_time`、`/imu_time` 使用 `ego_msgs/msg/ImuTime`。工作区附带的最小 `ego_msgs` 接口根据 `job_004.mcap` 内嵌 schema 提供；编译并加载工作区后，ROS 2 可回放这些自定义话题。估计器不依赖这些辅助话题重建时间。
-
-## 回放并显示
+原有逐项传参 launch 也使用统一接口，未使用 YAML 时配置名为空：
 
 ```bash
 ros2 launch openvins_slam bag_slam.launch.py \
-  cameras:=/data/scl_data/slam/stereo_live_bags/EGO/400hz/calib.yaml \
-  in_bag:=/data/scl_data/slam/stereo_live_bags/EGO/400hz/job_004.mcap \
-  realtime:=true imu_time_offset_sec:=0.025
+  cameras:=/path/to/calib.yaml in_bag:=/path/to/job_004.mcap \
+  outdir:=/tmp/openvins_results save_mcap:=true rviz2:=true realtime:=false
 ```
 
-这会启动处理节点和 RViz2，并发布仿真时钟。计算落后时允许回放减速，保留有效图像对；因此不保证硬实时。到达包末尾后保留最后结果，按 Ctrl+C 退出。如需同时写包，增加 `outbag:=/目标目录/结果.mcap`；只运行节点可设置 `rviz_enable:=false`。
+两个 launch 的 `rviz2` 默认均为 `false`。`bag_slam.launch.py` 保留 `realtime=true` 的回放默认值，其余节点默认值相同。
 
-RViz2 默认关闭图像显示，以减少渲染开销。需要查看双目跟踪图时，在 Displays 面板中勾选 `Stereo feature tracks`。
+## TUM 格式与校验
+
+轨迹无表头，每行格式为 `timestamp tx ty tz qx qy qz qw`，对应有效视觉更新的 `odom → imu` 位姿，平移单位米。时间为图像原始 header 的绝对时间，保留九位小数，不应用 IMU 时间修正；初始化和跳过的图像没有轨迹行。
+
+同时保存 MCAP 时，位姿、里程计及动态 TF 逐帧录制，三条完整 Path 仅在结束时各写入一条，避免历史轨迹重复写入。实时发布的完整 Path 随视觉更新发布。可使用现有校验工具检查原消息和定位结果：
+
+```bash
+ros2 run openvins_slam verify_mcap.py /path/to/job_004.mcap \
+  /tmp/openvins_results/openvins_job_004_.mcap
+```
+
+工具需要 Python `mcap` 和 `mcap-ros2-support`。回放时使用 `ros2 bag play <结果.mcap> --clock`，另行运行 `rviz2 -d "$(ros2 pkg prefix --share openvins_slam)/launch/bag_slam.rviz" --ros-args -p use_sim_time:=true`。
 
 ## 参数
 
-以下参数可通过 `ros2 run ... --ros-args -p 参数:=值` 或同名 launch 参数传入：
-
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `cameras` | 输入包同级目录的 `calib.yaml` | 标定文件路径；省略时自动查找，未找到则报错。 |
-| `in_bag` | 必填 | 输入 MCAP 文件路径。 |
-| `outbag` | 空 | 输出 MCAP 文件路径；离线模式必填，实时模式可选。 |
-| `realtime` | `false`（launch 默认 `true`） | `true` 按时间回放；`false` 尽快离线处理。 |
-| `stereo_topic` | `/stereo/image_raw` | `sensor_msgs/msg/CompressedImage` 拼接双目话题。 |
-| `imu_topic` | `/imu` | `sensor_msgs/msg/Imu` 话题。 |
-| `half_resolution` | `true` | 每目由 1920×1080 降为 960×540 后跟踪；不改变原包图像。 |
-| `apply_imu_bias` | `true` | 对估计输入预减标定偏置；若数据已扣偏置可设为 `false`。 |
-| `imu_time_offset_sec` | `calib.yaml` 中的 `ROS.ImuTimeOffsetSec`；若无则为 `0.0` | 显式指定计算用 IMU 时间偏移，单位秒；显式传入时优先于标定文件值。 |
-| `try_zupt` | 估计器配置值，当前为 `false` | 是否启用零速度更新；可传 `true` 或 `false`，并覆盖估计器配置。 |
-| `record_debug` | `false` | 同时将跟踪图和稀疏点写入输出包，可能明显增加文件体积。 |
-| `save_trajectory` | `false` | 将有效 IMU 位姿写为 TUM 格式文本。 |
-| `trajectory_file` | 空 | 轨迹输出路径；为空时使用 `outbag` 同目录及输入包文件名加 `_openvins_trajectory.txt`；未设置 `outbag` 时使用输入包目录。 |
-| `rviz_enable` | `true` | launch 参数：是否启动 RViz2。 |
+| `cameras` | 输入包同目录的 `calib.yaml` | 标定路径，找不到时报错。 |
+| `in_bag` | 必填 | 输入 MCAP 文件。 |
+| `outdir` | 必填 | TUM 和可选 MCAP 输出目录。 |
+| `save_mcap` | `false` | 保存原消息和定位结果。 |
+| `rviz2` | `false` | launch 开窗；节点启用发布和 EOF 保持。 |
+| `realtime` | `false`；逐项 launch 为 `true` | 按包内时间回放。 |
+| `stereo_topic` / `imu_topic` | `/stereo/image_raw` / `/imu` | 拼接双目压缩图和 IMU 话题。 |
+| `half_resolution` | `true` | 每目宽高减半后跟踪。 |
+| `apply_imu_bias` | `true` | 对估计输入预减标定偏置。 |
+| `imu_time_offset_sec` | 标定值，缺失为 `0.0` | 计算副本的固定 IMU 时间修正，不修改原消息。 |
+| `try_zupt` | 估计器配置值 | 零速度更新。 |
+| `record_debug` | `false` | 将跟踪图和稀疏点写入 MCAP。 |
 
-当前输入约定为一条 JPEG 压缩图像话题，每帧横向拼接两幅图，左半为 cam0、右半为 cam1；IMU 的角速度和加速度分别使用 rad/s 和 m/s²。标定中的平移按毫米转米，陀螺偏置按 deg/s 转 rad/s。传入的 `imu_time_offset_sec` 应用于计算副本；输出包保留原始时间和消息。
+输入为 JPEG 压缩拼接双目，左半 cam0、右半 cam1；IMU 角速度 rad/s，加速度 m/s²。标定平移按毫米转米、陀螺偏置按 deg/s 转 rad/s。换包必须核对时间偏移和偏置约定：`job_004.mcap` 曾验证的 `+0.025 s` 不适用于所有数据。与参考轨迹比较前应以整数纳秒配对，并处理坐标系和空间对齐。
 
-采集器源码的子模块在现有导出目录中缺失，无法最终确认采集端是否已经应用固定时间偏移。对 `job_004.mcap`，显式传入标定值约 **−5.089 ms** 时观测到轨迹严重发散；独立使用全包双目 PnP 与陀螺仪数据进行时间对齐诊断，最低旋转误差对应的偏移约为 **+25～30 ms**；示例采用已经完整运行验证的 +25 ms。该范围是传感器一致性诊断，并非精确真值或带真值的定位精度验证。对其他数据请重新核对采集端时间和偏置约定，不要直接沿用该诊断值。某些末尾图像可能缺少足够 IMU 覆盖，程序会报告并跳过这些帧。
+## 视觉参数与在线标定
+
+以下参数同时支持 `ros2 run ... --ros-args -p 名称:=值` 和 `bag_slam.launch.py 名称:=值`。未指定时继承安装包中的 EuRoC 估计器配置，launch 不覆盖这些默认值。
+
+| 参数 | 当前配置值 | 说明 |
+| --- | ---: | --- |
+| `num_pts` | 200 | 初始化后两目合计的目标跟踪数，每目 `floor(num_pts/2)` |
+| `init_max_features` | 50 | 初始化时两目合计的目标跟踪数，整数且至少 15 |
+| `max_clones` | 11 | 滑窗克隆数 |
+| `max_slam` | 50 | 状态内 SLAM 特征上限，允许 0 |
+| `max_slam_in_update` | 25 | 单批 SLAM 更新特征上限 |
+| `max_msckf_in_update` | 40 | 单次 MSCKF 更新特征上限 |
+| `fast_threshold` | 20 | FAST 检测阈值 |
+| `grid_x` / `grid_y` | 5 / 5 | 特征提取网格数 |
+| `min_px_dist` | 10 | 跟踪分辨率下的最小间距；有限正数，向上取整为核心使用的整数像素 |
+| `calib_cam_intrinsics` | true | 在线相机内参标定 |
+| `calib_cam_extrinsics` | true | 在线相机与 IMU 外参标定 |
+| `calib_cam_timeoffset` | true | 在线相机与 IMU 时间偏移标定 |
+
+除 `min_px_dist` 外数量参数必须为整数：`init_max_features` 至少 15，`num_pts` 和 `max_clones` 至少 2，`max_slam` 至少 0，其余至少 1。网格数不能超过对应跟踪图像尺寸，像素间距不能超过跟踪图像短边。参数在输出文件创建前校验；启动日志打印最终生效值和每目目标跟踪数。增大参数可能增加耗时和内存，目标数不保证都能检测到或被更新接受。
+
+**默认行为变化：** 相机内参、外参、时间偏移不再被入口强制关闭，而是遵循上述配置。IMU 内参和重力敏感项仍关闭；动态初始化中的标定优化仍关闭。需要复现历史固定标定行为时，在原命令后追加：
+
+```bash
+-p calib_cam_intrinsics:=false \
+-p calib_cam_extrinsics:=false \
+-p calib_cam_timeoffset:=false
+```
+
+增强视觉配置示例，在原有输入、输出参数后追加；这些是实验值，默认视觉参数保持不变：
+
+```bash
+-p num_pts:=400 \
+-p init_max_features:=100 \
+-p max_clones:=15 \
+-p max_slam:=100 \
+-p max_msckf_in_update:=80
+```
+
+已有 `half_resolution:=false` 可用于全分辨率对照。更高分辨率和更多特征是否提高精度需要在相同数据上评测。
+
+固定时间修正 `s=imu_time_offset_sec` 仍只应用到 IMU 计算副本：`t_imu_corrected=t_imu_raw+s`。在线时间残差 `d` 从零开始，OpenVINS 使用 `t_imu_corrected=t_cam+d`；图像等待 IMU 覆盖此时刻，角速度也在该时刻插值。原包、结果及 TUM 图像时间戳不变。首尾覆盖不足的图像计入跳过统计，内部历史覆盖丢失、非有限残差或传播倒退会报错并清理未提交输出。
+
+结束时 `FINAL_CALIBRATION` 输出固定修正 `s`、残差 `d`、等效原始 IMU 修正 `s-d`，以及两目最终内参、外参。内参对应日志中标明的跟踪分辨率；外参格式为 `q_ItoC(x y z w), p_IinC(x y z)`，平移单位米。日志不会覆盖输入标定文件。
+
+外参在线标定开启时，相机位姿及协方差使用当前估计，`imu → cam*_optical` 随有效位姿写入 `/tf`；关闭时继续使用 `/tf_static`。同一相机边不会同时发布为动态和静态 TF。
 
 ## 结果话题
 
@@ -117,7 +159,7 @@ RViz2 默认关闭图像显示，以减少渲染开销。需要查看双目跟�
 | `/openvins/pose_imu`、`/openvins/pose_cam0`、`/openvins/pose_cam1` | IMU 和相机位姿及协方差。 |
 | `/openvins/path_imu`、`/openvins/path_cam0`、`/openvins/path_cam1` | 对应的完整轨迹。 |
 | `/openvins/odom` | IMU 位姿和 IMU 坐标系下的速度。 |
-| `/tf`、`/tf_static` | `odom → imu → cam0_optical / cam1_optical` 坐标树。 |
+| `/tf`、`/tf_static` | `odom → imu → cam0_optical / cam1_optical` 坐标树；相机边按外参标定开关使用动态或静态 TF。 |
 | `/openvins/tracking_image`、`/openvins/points` | 在线跟踪图及当前稀疏特征；仅在 `record_debug=true` 时写包。 |
 
 实时模式的定位结果和完整 Path 仍随有效视觉更新发布。录制包中的 Path 每条话题只有一条最终完整轨迹，因此标准回放时完整轨迹在最后一次有效位姿的时间才出现；逐帧 Pose、odom 和动态 TF 可用于观察整个运动过程。输入数据没有真值轨迹时，无法据此给出绝对位置精度指标。

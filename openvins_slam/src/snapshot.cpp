@@ -59,9 +59,20 @@ Matrix6x15d twist_jacobian(const Eigen::Matrix3d &R, const Eigen::Vector3d &v) {
   return J;
 }
 
+Eigen::Matrix<double, 6, 6> extrinsic_pose_jacobian(const Eigen::Matrix3d &C, const Eigen::Vector3d &p) {
+  Eigen::Matrix<double, 6, 6> J = Eigen::Matrix<double, 6, 6>::Zero();
+  J.block<3, 3>(0, 0) = C * skew(p);
+  J.block<3, 3>(0, 3) = -C;
+  J.block<3, 3>(3, 0) = C;
+  return J;
+}
+
 Snapshot make_snapshot(const std::shared_ptr<ov_msckf::State> &state, const Calibration &calibration,
                        int64_t stamp_ns, const Eigen::Vector3d &gyro, double gyro_noise_var) {
   Snapshot out;
+  for (const auto &entry : state->_cam_intrinsics) {
+    if (!entry.second->value().allFinite()) throw std::runtime_error("estimator produced non-finite camera intrinsics");
+  }
   const auto stamp = ros_time(stamp_ns);
   const Eigen::Matrix3d R = state->_imu->Rot();
   const Eigen::Matrix3d S = R.transpose();
@@ -75,9 +86,10 @@ Snapshot make_snapshot(const std::shared_ptr<ov_msckf::State> &state, const Cali
     Eigen::Vector3d r = Eigen::Vector3d::Zero();
     Eigen::Matrix3d R_I_C = Eigen::Matrix3d::Identity();
     if (i > 0) {
-      const auto &T = calibration.camera[i - 1].T_cam_imu;
-      R_I_C = T.block<3, 3>(0, 0).transpose();
-      r = -R_I_C * T.block<3, 1>(0, 3);
+      const auto extrinsic = state->_calib_IMUtoCAM.at(i - 1);
+      if (!extrinsic->value().allFinite()) throw std::runtime_error("estimator produced non-finite camera extrinsics");
+      R_I_C = extrinsic->Rot().transpose();
+      r = -R_I_C * extrinsic->pos();
     }
     auto &pose = out.poses[i];
     pose.header.stamp = stamp;
@@ -85,7 +97,17 @@ Snapshot make_snapshot(const std::shared_ptr<ov_msckf::State> &state, const Cali
     set_xyz(pose.pose.pose.position, p + S * r);
     set_quaternion(pose.pose.pose.orientation, S * R_I_C);
     const auto J = pose_jacobian(S, r);
-    set_covariance(pose.pose.covariance, J * covariance * J.transpose());
+    if (i > 0 && state->_options.do_calib_camera_pose) {
+      const auto extrinsic = state->_calib_IMUtoCAM.at(i - 1);
+      const auto joint = ov_msckf::StateHelper::get_marginal_covariance(state, {state->_imu, extrinsic});
+      Eigen::Matrix<double, 6, 21> joint_J;
+      joint_J << J, extrinsic_pose_jacobian(S * R_I_C, extrinsic->pos());
+      const Eigen::Matrix<double, 6, 6> camera_covariance = joint_J * joint * joint_J.transpose();
+      if (!camera_covariance.allFinite()) throw std::runtime_error("non-finite camera pose covariance");
+      set_covariance(pose.pose.covariance, camera_covariance);
+    } else {
+      set_covariance(pose.pose.covariance, J * covariance * J.transpose());
+    }
   }
   out.odom.header = out.poses[0].header;
   out.odom.child_frame_id = "imu";
@@ -104,6 +126,17 @@ Snapshot make_snapshot(const std::shared_ptr<ov_msckf::State> &state, const Cali
   tf.transform.translation.z = out.poses[0].pose.pose.position.z;
   tf.transform.rotation = out.poses[0].pose.pose.orientation;
   out.tf.transforms.push_back(tf);
+  if (state->_options.do_calib_camera_pose) {
+    for (int i = 0; i < 2; ++i) {
+      const auto extrinsic = state->_calib_IMUtoCAM.at(i);
+      tf.header.frame_id = "imu";
+      tf.child_frame_id = "cam" + std::to_string(i) + "_optical";
+      const Eigen::Matrix3d camera_to_imu = extrinsic->Rot().transpose();
+      set_xyz(tf.transform.translation, -camera_to_imu * extrinsic->pos());
+      set_quaternion(tf.transform.rotation, camera_to_imu);
+      out.tf.transforms.push_back(tf);
+    }
+  }
   return out;
 }
 

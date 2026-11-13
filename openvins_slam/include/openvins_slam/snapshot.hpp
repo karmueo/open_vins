@@ -24,6 +24,8 @@ struct Snapshot {
 
 // ROS pose covariance uses global fixed-axis perturbations and position first.
 Matrix6x15d pose_jacobian(const Eigen::Matrix3d &R_imu_to_global, const Eigen::Vector3d &camera_in_imu);
+Eigen::Matrix<double, 6, 6> extrinsic_pose_jacobian(const Eigen::Matrix3d &camera_to_global,
+                                                 const Eigen::Vector3d &imu_in_camera);
 Matrix6x15d twist_jacobian(const Eigen::Matrix3d &R_global_to_imu, const Eigen::Vector3d &velocity_global);
 Snapshot make_snapshot(const std::shared_ptr<ov_msckf::State> &state, const Calibration &calibration,
                        int64_t stamp_ns, const Eigen::Vector3d &gyro_corrected, double gyro_noise_var);

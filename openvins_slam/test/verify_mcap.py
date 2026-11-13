@@ -54,6 +54,27 @@ def covariance(values):
             assert math.isclose(values[6 * i + j], values[6 * j + i], rel_tol=1e-6, abs_tol=1e-9)
 
 
+def quaternion_product(a, b):
+    x, y, z, w = a
+    u, v, s, t = b
+    return (w*u + x*t + y*s - z*v, w*v - x*s + y*t + z*u,
+            w*s + x*v - y*u + z*t, w*t - x*u - y*v - z*s)
+
+
+def compose_pose(a, b):
+    rotated = quaternion_product(quaternion_product(a[3:], b[:3] + (0.0,)),
+                                 tuple(-v for v in a[3:6]) + (a[6],))[:3]
+    return tuple(a[i] + rotated[i] for i in range(3)) + quaternion_product(a[3:], b[3:])
+
+
+def transform_pose(tf):
+    v, q = tf.transform.translation, tf.transform.rotation
+    values = (v.x, v.y, v.z, q.x, q.y, q.z, q.w)
+    assert all(math.isfinite(v) for v in values)
+    assert abs(sum(v*v for v in values[3:]) - 1) < 1e-6
+    return values
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source")
@@ -69,7 +90,8 @@ def main():
     pose_records = collections.defaultdict(list)
     poses = {}
     transforms = {}
-    static = set()
+    static = {}
+    camera_transforms = collections.defaultdict(dict)
     with open(args.output, "rb") as stream:
         reader = make_reader(stream, decoder_factories=[DecoderFactory()])
         for _, channel, record, msg in reader.iter_decoded_messages(topics=list(RESULT_TOPICS), log_time_order=True):
@@ -104,20 +126,37 @@ def main():
                 assert all(math.isfinite(x) for x in (v.x, v.y, v.z, w.x, w.y, w.z))
             elif topic == "/tf":
                 for tf in msg.transforms:
-                    assert tf.header.frame_id == "odom" and tf.child_frame_id == "imu"
-                    v, q = tf.transform.translation, tf.transform.rotation
-                    transforms[ns(tf.header.stamp)] = (v.x, v.y, v.z, q.x, q.y, q.z, q.w)
+                    t = ns(tf.header.stamp)
+                    if tf.child_frame_id == "imu":
+                        assert tf.header.frame_id == "odom" and t not in transforms
+                        transforms[t] = transform_pose(tf)
+                    else:
+                        assert tf.header.frame_id == "imu" and tf.child_frame_id in ("cam0_optical", "cam1_optical")
+                        assert t not in camera_transforms[tf.child_frame_id]
+                        camera_transforms[tf.child_frame_id][t] = transform_pose(tf)
             elif topic == "/tf_static":
                 for tf in msg.transforms:
                     assert tf.header.frame_id == "imu"
-                    static.add(tf.child_frame_id)
+                    assert tf.child_frame_id in ("cam0_optical", "cam1_optical")
+                    assert tf.child_frame_id not in static
+                    static[tf.child_frame_id] = transform_pose(tf)
     assert counts[POSES[0]] > 0, "no pose estimates"
     assert all(counts[t] == counts[POSES[0]] for t in POSES + ("/openvins/odom", "/tf")), counts
     assert all(counts[t] == 1 for t in PATHS), counts
     for pose_topic, path_topic in zip(POSES, PATHS):
         assert final_paths[path_topic] == pose_records[pose_topic], f"Path differs from per-frame poses: {path_topic}"
-    assert static == {"cam0_optical", "cam1_optical"}
     assert poses == transforms, "TF and IMU pose differ"
+    assert set(static) in (set(), {"cam0_optical", "cam1_optical"})
+    assert not (static and camera_transforms), "camera TF appears in both static and dynamic topics"
+    for camera in range(2):
+        child = f"cam{camera}_optical"
+        if not static:
+            assert set(camera_transforms[child]) == set(poses), "missing dynamic camera TF"
+        for row in pose_records[POSES[camera + 1]]:
+            t, _, *actual = row
+            expected = compose_pose(poses[t], static[child] if static else camera_transforms[child][t])
+            assert all(math.isclose(actual[i], expected[i], rel_tol=1e-7, abs_tol=1e-8) for i in range(3))
+            assert abs(sum(actual[i] * expected[i] for i in range(3, 7))) > 1 - 1e-7, "camera TF orientation differs"
     print("Original channels and serialized messages preserved:", sum(len(v) for v in before.values()))
     print("Pose updates:", counts[POSES[0]], "final path length:", len(final_paths[PATHS[0]]))
     print("PASS: schemas, original messages, poses, trajectories, odometry, and TF")

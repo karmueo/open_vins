@@ -1,4 +1,5 @@
 #include "openvins_slam/trajectory_writer.hpp"
+#include "openvins_slam/output_paths.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -150,3 +151,16 @@ TEST_F(TrajectoryWriterTest, CleansTemporaryFilesAndOverwritesConcurrentFile) {
 }
 
 } // namespace
+
+TEST(OutputPaths, UsesInputStemAndOriginalConfigName) {
+  const auto paths = openvins_slam::output_paths("/tmp/results", "/data/job.part.mcap", "trial.v2", true);
+  EXPECT_EQ(paths.trajectory, "/tmp/results/openvins_job.part_trial.v2_trajectory.txt");
+  EXPECT_EQ(paths.mcap, "/tmp/results/openvins_job.part_trial.v2.mcap");
+}
+TEST(OutputPaths, PreservesEmptyConfigSegmentAndDisablesMcap) {
+  const auto paths = openvins_slam::output_paths("/tmp/results", "/data/job.mcap", "", false);
+  EXPECT_EQ(paths.trajectory, "/tmp/results/openvins_job__trajectory.txt");
+  EXPECT_TRUE(paths.mcap.empty());
+  EXPECT_THROW(openvins_slam::output_paths("", "job.mcap", "", false), std::runtime_error);
+  EXPECT_THROW(openvins_slam::output_paths("/tmp", "job.mcap", "../escape", true), std::runtime_error);
+}

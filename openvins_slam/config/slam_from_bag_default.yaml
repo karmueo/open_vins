@@ -1,0 +1,42 @@
+# OpenVINS 默认参数基线：config/euroc_mav/estimator_config.yaml。
+# 标定加载、IMU 噪声和动态初始化仍由 openvins_slam 的适配层配置。
+slam_from_bag:
+  ros__parameters:
+    # 输入输出路径；换包时修改 cameras、in_bag 和输出路径。
+    cameras: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/calib.yaml"
+    in_bag: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/job_002.mcap"
+    # 结果目录：始终保存 TUM；文件名包含输入包和本配置的名称。
+    outdir: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/output"
+    # 可选保存原始消息与定位结果。
+    save_mcap: false
+    # 启动 RViz2；不改变 realtime 处理速度，结束后保留最后画面。
+    rviz2: false
+    stereo_topic: "/stereo/image_raw"
+    imu_topic: "/imu"
+
+    # 使用节点默认的离线处理、半分辨率跟踪和标定偏置预减。
+    realtime: false
+    use_sim_time: false
+    half_resolution: true
+    apply_imu_bias: true
+    record_debug: false
+    try_zupt: false
+    # 不覆盖 imu_time_offset_sec：读取 calib.yaml 的 ROS.ImuTimeOffsetSec，缺失时为 0.0 秒。
+
+    # 默认视觉参数；两个目标特征数均为两目合计，每目分配向下取整的一半。
+    num_pts: 200
+    # 初始化阶段两目合计目标特征数，整数且至少为 15。
+    init_max_features: 50
+    max_clones: 11
+    max_slam: 50
+    max_slam_in_update: 25
+    max_msckf_in_update: 40
+    fast_threshold: 20
+    grid_x: 5
+    grid_y: 5
+    # 跟踪分辨率下的像素距离。
+    min_px_dist: 10.0
+
+    calib_cam_intrinsics: false
+    calib_cam_extrinsics: false
+    calib_cam_timeoffset: false

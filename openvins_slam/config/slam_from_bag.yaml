@@ -1,0 +1,68 @@
+# EGO 800Hz job_002 实测最优配置。换包必须重新核对路径、标定和时间修正。
+# 成功结束时会替换同名输出文件；需要保留的结果请先另存。
+# ROS 2 节点名称，以下参数应用于 slam_from_bag 节点。
+slam_from_bag:
+  # ROS 2 参数配置入口，节点启动时读取以下各项。
+  ros__parameters:
+    # 相机与 IMU 标定文件路径；为空时查找输入包同目录的 calib.yaml。
+    cameras: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/calib.yaml"
+    # 输入 MCAP 文件路径，必填；包含下方指定的双目图像与 IMU 话题。
+    in_bag: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/job_002.mcap"
+    # 结果目录：始终保存 TUM；文件名包含输入包和本配置的名称。
+    outdir: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/output"
+    # 可选保存原始消息与定位结果。
+    save_mcap: false
+    # 启动 RViz2；不改变 realtime 处理速度，结束后保留最后画面。
+    rviz2: false
+    # 输入双目 JPEG 压缩图像话题（CompressedImage）；每帧左半为 cam0，右半为 cam1。
+    stereo_topic: "/stereo/image_raw"
+    # 输入 IMU 话题（sensor_msgs/msg/Imu）；角速度单位 rad/s，加速度单位 m/s²。
+    imu_topic: "/imu"
+
+    # 处理控制：离线尽快计算；启用显示时自动使用仿真时钟。
+    # 是否按包内时间间隔回放；false 表示尽快离线处理，true 表示按时间回放并发布结果。
+    realtime: false
+    # 是否使用 ROS 仿真时钟；当前离线处理设为 false，realtime=true 或 rviz2=true 时节点会自动开启。
+    use_sim_time: false
+    # 是否将每目图像宽高各缩小为一半后跟踪，并同步缩放内参；false 使用原分辨率。
+    half_resolution: false
+    # 是否在送入估计器前减去标定文件中的陀螺仪与加速度计偏置；数据已扣除偏置时设为 false。
+    apply_imu_bias: true
+    # 是否将跟踪图像和稀疏特征点写入输出包；开启后会增加输出体积。
+    record_debug: false
+    # 是否启用零速度更新（ZUPT），由估计器检测静止条件后施加零速度约束。
+    try_zupt: false
+    # 该数据包经轨迹精度测试选出的固定修正（秒），不是其他包的通用值。
+    # 删除此项可恢复读取 calib.yaml 的 ROS.ImuTimeOffsetSec（缺失时为 0.0）。
+    # 固定 IMU 时间修正，单位秒：计算时间 = 原始 IMU 时间 + 此值；当前提前 7 毫秒，不修改原始消息。
+    imu_time_offset_sec: -0.007
+
+    # 视觉约束：两个目标特征数均为两目合计，每目分配向下取整的一半。
+    # 初始化后两目合计的目标跟踪特征数，整数且至少为 2；当前每目目标为 200 个。
+    num_pts: 400
+    # 初始化阶段两目合计的目标跟踪特征数，整数且至少为 15；当前每目目标为 50 个。
+    init_max_features: 100
+    # 滑动窗口保留的历史 IMU 位姿克隆数上限，整数且至少为 2。
+    max_clones: 15
+    # 估计器状态中保留的 SLAM 特征数上限，非负整数；0 表示不保留此类特征。
+    max_slam: 100
+    # 每批 SLAM 特征更新的数量上限，整数且至少为 1；更多特征会分批更新。
+    max_slam_in_update: 50
+    # 单次 MSCKF 更新使用的特征数上限，整数且至少为 1。
+    max_msckf_in_update: 80
+    # FAST 角点检测阈值，整数且至少为 1；值越高，角点筛选越严格。
+    fast_threshold: 20
+    # 特征提取网格的水平方向分区数，正整数且不能超过跟踪图像宽度。
+    grid_x: 5
+    # 特征提取网格的竖直方向分区数，正整数且不能超过跟踪图像高度。
+    grid_y: 5
+    # 特征最小间距，单位为跟踪分辨率下的像素；有限正数，向上取整后使用，不能超过图像短边。
+    min_px_dist: 20.0
+
+    # 在线相机标定：设为 false 可分别固定内参、外参或时间偏移。
+    # 是否在线估计相机内参（焦距、主点及畸变参数）；false 固定为标定文件中的值。
+    calib_cam_intrinsics: false
+    # 是否在线估计相机与 IMU 之间的旋转和平移外参；false 固定为标定文件中的值。
+    calib_cam_extrinsics: false
+    # 是否在线估计相机与 IMU 的剩余时间偏移，初值为 0；在固定 IMU 时间修正的基础上继续估计。
+    calib_cam_timeoffset: false
