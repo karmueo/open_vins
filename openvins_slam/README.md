@@ -22,23 +22,34 @@ source install/setup.bash
 
 ```bash
 ros2 launch openvins_slam slam_from_bag.launch.py \
-  params_file:="$(pwd)/openvins_slam/config/slam_from_bag.yaml"
+  config:="$(pwd)/openvins_slam/config/slam_from_bag.yaml" \
+  in_bag:=/path/to/job_002.mcap
 ```
 
-省略 `params_file` 时读取安装目录的配置副本；修改源码配置后可显式传入源码路径。
+`in_bag` 必填。省略 `config` 时读取安装目录的配置副本；修改源码配置后可显式传入源码路径。`config`、`in_bag`、`cameras`、`outdir` 均支持相对启动工作目录的路径和 `~` 展开。
+
+`cameras` 可选，省略或为空时查找输入包同目录的 `calib.yaml`；找不到则报错。`outdir` 可选，省略或为空时，在启动命令的工作目录下创建 `output/<输入包名>_<YYYYMMDDHHMMSS>`，例如 `output/job_002_20261116143025`。包名去掉最后一个扩展名，时间使用系统本地时间；自动生成的目录已存在时会报错，避免同秒启动覆盖结果。显式传入 `outdir` 时直接使用该目录，不添加时间子目录，不存在时由节点自动创建：
+
+```bash
+ros2 launch openvins_slam slam_from_bag.launch.py \
+  in_bag:=/path/to/job_002.mcap \
+  cameras:=/path/to/calib.yaml \
+  outdir:=/tmp/openvins_results
+```
+
+YAML 仅保留处理配置，例如：
 
 ```yaml
 slam_from_bag:
   ros__parameters:
-    cameras: "/path/to/calib.yaml"
-    in_bag: "/path/to/job_002.mcap"
-    outdir: "/tmp/openvins_results"
-    save_mcap: false
+    save_mcap: true
     rviz2: false
     realtime: false
 ```
 
-`outdir` 必填，目录不存在时自动创建。TUM 始终导出；`save_mcap: true` 时额外保存包含全部原始消息和定位结果的单个 MCAP。输入包和参数 YAML 均取去掉最后一个扩展名的文件名，例如 `job_002.mcap` 与 `slam_from_bag.yaml` 生成：
+旧 launch 参数 `params_file` 已改为 `config`；YAML 中的 `in_bag`、`cameras`、`outdir` 也必须删除，改为 launch 参数。使用旧接口时会报错并提示迁移。
+
+TUM 始终导出；默认 `save_mcap: true`，额外保存包含全部原始消息和定位结果的单个 MCAP；设为 `false` 可仅保存轨迹。输入包和参数 YAML 均取去掉最后一个扩展名的文件名，例如 `job_002.mcap` 与 `slam_from_bag.yaml` 在输出目录中生成：
 
 - `openvins_job_002_slam_from_bag_trajectory.txt`
 - `openvins_job_002_slam_from_bag.mcap`（开启保存时）
@@ -62,6 +73,8 @@ ros2 run openvins_slam slam_from_bag --ros-args \
 ```
 
 没有参数文件时配置名为空，生成 `openvins_job_004__trajectory.txt` 和 `openvins_job_004_.mcap`。直接运行时也可传 `--params-file /path/to/config.yaml`，配置名取最后一个参数文件名。内部 `config_name` 用于 launch 传递原始配置名，通常无需设置。直接运行节点的 `rviz2=true` 只启用发布和 EOF 保持，需要另行打开 RViz。
+
+直接运行节点及下方 `bag_slam.launch.py` 仍要求显式传入 `outdir`；自动生成时间目录仅适用于 `slam_from_bag.launch.py`。
 
 原有逐项传参 launch 也使用统一接口，未使用 YAML 时配置名为空：
 
@@ -90,10 +103,11 @@ ros2 run openvins_slam verify_mcap.py /path/to/job_004.mcap \
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
+| `config` | 安装目录的 `config/slam_from_bag.yaml` | `slam_from_bag.launch.py` 使用的 ROS 2 参数文件。 |
 | `cameras` | 输入包同目录的 `calib.yaml` | 标定路径，找不到时报错。 |
 | `in_bag` | 必填 | 输入 MCAP 文件。 |
-| `outdir` | 必填 | TUM 和可选 MCAP 输出目录。 |
-| `save_mcap` | `false` | 保存原消息和定位结果。 |
+| `outdir` | YAML launch：`<启动工作目录>/output/<包名>_<YYYYMMDDHHMMSS>`；逐项调用必填 | TUM 和可选 MCAP 输出目录。 |
+| `save_mcap` | `true` | 保存原消息和定位结果；设为 `false` 可仅保存轨迹。 |
 | `rviz2` | `false` | launch 开窗；节点启用发布和 EOF 保持。 |
 | `realtime` | `false`；逐项 launch 为 `true` | 按包内时间回放。 |
 | `stereo_topic` / `imu_topic` | `/stereo/image_raw` / `/imu` | 拼接双目压缩图和 IMU 话题。 |

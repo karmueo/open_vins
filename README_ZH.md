@@ -54,19 +54,27 @@ MCAP 流程使用 `/stereo/image_raw`（`sensor_msgs/msg/CompressedImage`，横�
 
 先编辑 [slam_from_bag.yaml](openvins_slam/config/slam_from_bag.yaml) 中 `slam_from_bag.ros__parameters` 下的配置，再从仓库根目录启动。设置 `rviz2: true` 可同时打开 RViz2，不改变 `realtime` 指定的处理速度。
 
-**输出 MCAP 和轨迹的同名旧文件会在成功结束时被原子替换，需保留时先另存。** 输出包保留全部原始消息并追加结果，请预留大于输入包的磁盘空间。`outdir` 必填，TUM 始终保存；仅在 `save_mcap=true` 时保存 MCAP。默认 `save_mcap=false`、`rviz2=false`。
+**显式指定输出目录时，同名旧 MCAP 和轨迹会在成功结束时被原子替换，需保留时先另存。** 输出包保留全部原始消息并追加结果，请预留大于输入包的磁盘空间。省略 `outdir` 时自动创建带时间的结果目录。TUM 始终保存；仅在 `save_mcap=true` 时保存 MCAP。默认 `save_mcap=true`、`rviz2=false`。
 
 ```bash
 # 使用源码目录中的 YAML，离线处理 MCAP 并导出 TUM 轨迹
 ros2 launch openvins_slam slam_from_bag.launch.py \
-  params_file:="$(pwd)/openvins_slam/config/slam_from_bag.yaml"
+  config:="$(pwd)/openvins_slam/config/slam_from_bag.yaml" \
+  in_bag:=/path/to/job_002.mcap
 ```
 
 | 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
 | --- | --- | --- | --- |
-| `params_file` | 选择 ROS 2 参数 YAML | 输入文件 | 默认包安装目录的 `config/slam_from_bag.yaml`；支持绝对路径、相对当前工作目录的路径及 `~` 展开 |
+| `config` | 选择 ROS 2 参数 YAML | 输入文件 | 默认包安装目录的 `config/slam_from_bag.yaml` |
+| `in_bag` | 指定输入 MCAP | 输入文件 | 必填，必须是存在的普通文件 |
+| `cameras` | 指定相机与 IMU 标定 | 输入文件 | 选传；省略或为空时查找输入包同目录的 `calib.yaml`，找不到时报错 |
+| `outdir` | 指定结果目录 | 输出目录 | 选传；省略或为空时创建 `<启动工作目录>/output/<输入包名>_<YYYYMMDDHHMMSS>`；显式指定时直接使用该目录 |
 
-可将 YAML 复制到其他位置后传给 `params_file`。省略该参数会读取安装副本；修改源码 YAML 后需重新构建安装，才能更新安装副本。上面的显式路径会直接读取编辑后的源码文件。
+以上路径均支持绝对路径、相对启动工作目录的路径和 `~` 展开。可将 YAML 复制到其他位置后传给 `config`。省略该参数会读取安装副本；修改源码 YAML 后需重新构建安装，才能更新安装副本。上面的显式路径会直接读取编辑后的源码文件。
+
+默认输出目录例如 `output/job_002_20261116143025`，输入包名去掉最后一个扩展名，时间使用启动时的系统本地时间。自动生成的目录已存在时会报错，避免同秒启动覆盖结果。自动生成目录仅适用于本节 launch；直接运行节点和 `bag_slam.launch.py` 仍要求显式传入 `outdir`。
+
+旧 launch 参数 `params_file` 已改为 `config`。`in_bag`、`cameras`、`outdir` 不再放入 YAML；旧参数或 YAML 中仍包含这些路径项时会报错并提示迁移。
 
 ### YAML 配置项
 
@@ -75,27 +83,22 @@ ros2 launch openvins_slam slam_from_bag.launch.py \
 ```yaml
 slam_from_bag:
   ros__parameters:
-    in_bag: "/data/scl_data/slam/stereo_live_bags/EGO/400hz/job_004.mcap"
-    outdir: "/tmp/openvins_results"
-    save_mcap: false
+    save_mcap: true
     rviz2: false
     realtime: false
 ```
 
 结果名为 `openvins_<输入包名>_<配置文件名>_trajectory.txt`，可选 MCAP 为 `openvins_<输入包名>_<配置文件名>.mcap`，两者去掉最后一个扩展名。没有配置文件时配置名为空并保留下划线。旧输出参数已移除，详情见[包说明](openvins_slam/README.md)。
 
-此处仅展示结构，完整配置见链接文件。YAML 内的文件路径使用绝对路径，不进行相对 YAML 目录解析或变量替换。字符串空值写成 `""`，不要写成 YAML 的 `null`；布尔值使用 `true` / `false`，数值不加引号，秒数使用小数形式。
+此处仅展示结构，完整配置见链接文件。YAML 仅存放处理参数。字符串空值写成 `""`，不要写成 YAML 的 `null`；布尔值使用 `true` / `false`，数值不加引号，秒数使用小数形式。
 
-随包配置使用 EGO 800Hz `job_002.mcap`，输出到其同目录的 `output`。调优配置使用 `-0.007 s`，默认基线配置读取标定时间修正；换包必须重新核对。 表中的“示例值”来自随包 YAML，“省略时”指删除对应键后节点采用的行为。
+随包调优配置基于 EGO 800Hz `job_002.mcap`，使用 `-0.007 s` 时间修正；默认基线配置读取标定时间修正，换包必须重新核对。表中的“示例值”来自随包 YAML，“省略时”指删除对应键后节点采用的行为。
 
 <a id="6-参数速查"></a>
 
 | 支持的参数／配置项 | 参数作用 | 输入/输出 | 示例值 / 省略时的行为 |
 | --- | --- | --- | --- |
-| `cameras` | 指定相机与 IMU 标定 | 输入文件 | 示例为 EGO 目录的 `calib.yaml`；省略或 `""` 时查找输入包同目录的 `calib.yaml` |
-| `in_bag` | 指定输入 MCAP | 输入文件 | 示例为 EGO 800Hz `job_002.mcap`；必填，无有效默认值 |
-| `outdir` | 输出目录 | 输出目录 | 必填；不存在时自动创建 |
-| `save_mcap` | 保存原始消息与结果 MCAP | 行为控制项 | 默认 `false` |
+| `save_mcap` | 保存原始消息与结果 MCAP | 行为控制项 | 默认 `true`；设为 `false` 可仅保存轨迹 |
 | `rviz2` | 启动 RViz2 | 行为控制项 | 默认 `false`；保持 `realtime` 速度，EOF 后保留画面 |
 | `stereo_topic` | 压缩拼接双目话题 | 输入值 | 示例及省略时均为 `/stereo/image_raw`；必须非空且与 IMU 话题不同 |
 | `imu_topic` | IMU 话题 | 输入值 | 示例及省略时均为 `/imu`；必须非空且与双目话题不同 |
@@ -182,7 +185,7 @@ ros2 launch openvins_slam bag_slam.launch.py \
   rviz2:=true
 ```
 
-到达包末尾后提交轨迹、保留最后结果，按 Ctrl+C 退出。需要同时写包时加 `save_mcap:=true`；只跑节点时设 `rviz2:=false`。RViz2 默认关闭图像显示，需要时在 Displays 面板勾选 `Stereo feature tracks`。
+到达包末尾后提交轨迹、保留最后结果，按 Ctrl+C 退出。默认同时写包，仅保存轨迹时加 `save_mcap:=false`；只跑节点时设 `rviz2:=false`。RViz2 默认关闭图像显示，需要时在 Displays 面板勾选 `Stereo feature tracks`。
 
 | 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
 | --- | --- | --- | --- |

@@ -1,14 +1,10 @@
 # OpenVINS 默认参数基线：config/euroc_mav/estimator_config.yaml。
 # 标定加载、IMU 噪声和动态初始化仍由 openvins_slam 的适配层配置。
+# in_bag、cameras、outdir 通过 slam_from_bag.launch.py 的参数传入。
 slam_from_bag:
   ros__parameters:
-    # 输入输出路径；换包时修改 cameras、in_bag 和输出路径。
-    cameras: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/calib.yaml"
-    in_bag: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/job_002.mcap"
-    # 结果目录：始终保存 TUM；文件名包含输入包和本配置的名称。
-    outdir: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/output"
     # 可选保存原始消息与定位结果。
-    save_mcap: false
+    save_mcap: true
     # 启动 RViz2；不改变 realtime 处理速度，结束后保留最后画面。
     rviz2: false
     stereo_topic: "/stereo/image_raw"

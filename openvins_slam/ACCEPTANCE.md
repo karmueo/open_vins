@@ -165,7 +165,7 @@ launch 检查覆盖空值不传递、整数/小数/布尔转换及非法值提�
 
 ## 统一输出配置与 RViz2 验收（2026-11-13）
 
-节点与两个 MCAP launch 已统一使用必填 `outdir`、默认关闭的 `save_mcap` 和 `rviz2`。TUM 始终写出，文件名包含输入包 stem 和原始参数 YAML stem；无 YAML 的逐项调用保留空配置名和下划线。旧输出参数与旧 `rviz_enable` 不再接受。此前章节中的旧接口命令属于历史验收记录，当前用法见 README。
+节点与两个 MCAP launch 已统一使用必填 `outdir`、默认开启的 `save_mcap` 和默认关闭的 `rviz2`。TUM 始终写出，文件名包含输入包 stem 和原始参数 YAML stem；无 YAML 的逐项调用保留空配置名和下划线。旧输出参数与旧 `rviz_enable` 不再接受。此前章节中的旧接口命令属于历史验收记录，当前用法见 README。
 
 最终构建通过，五个 CTest 目标全部通过（四个 gtest 目标和一个含六项检查的 Python launch 测试）。新增覆盖输出命名、空配置名、可选 MCAP、原始 YAML/符号链接文件名、两份随包配置默认值、显示与速度分离，以及非法布尔值和旧 launch 参数拒绝。
 

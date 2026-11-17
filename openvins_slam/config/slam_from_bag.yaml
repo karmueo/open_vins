@@ -1,17 +1,12 @@
-# EGO 800Hz job_002 实测最优配置。换包必须重新核对路径、标定和时间修正。
+# EGO 800Hz job_002 实测最优配置。换包必须重新核对标定和时间修正。
+# in_bag、cameras、outdir 通过 slam_from_bag.launch.py 的参数传入。
 # 成功结束时会替换同名输出文件；需要保留的结果请先另存。
 # ROS 2 节点名称，以下参数应用于 slam_from_bag 节点。
 slam_from_bag:
   # ROS 2 参数配置入口，节点启动时读取以下各项。
   ros__parameters:
-    # 相机与 IMU 标定文件路径；为空时查找输入包同目录的 calib.yaml。
-    cameras: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/calib.yaml"
-    # 输入 MCAP 文件路径，必填；包含下方指定的双目图像与 IMU 话题。
-    in_bag: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/job_002.mcap"
-    # 结果目录：始终保存 TUM；文件名包含输入包和本配置的名称。
-    outdir: "/data/scl_data/slam/stereo_live_bags/EGO/800hz/output"
     # 可选保存原始消息与定位结果。
-    save_mcap: false
+    save_mcap: true
     # 启动 RViz2；不改变 realtime 处理速度，结束后保留最后画面。
     rviz2: false
     # 输入双目 JPEG 压缩图像话题（CompressedImage）；每帧左半为 cam0，右半为 cam1。

@@ -78,7 +78,7 @@ def generate_launch_description():
         DeclareLaunchArgument("cameras", default_value="", description="Path to calib.yaml; defaults to calib.yaml beside the input MCAP"),
         DeclareLaunchArgument("in_bag", description="Path to the input MCAP file"),
         DeclareLaunchArgument("outdir", description="Output directory for TUM and optional MCAP"),
-        DeclareLaunchArgument("save_mcap", default_value="false", description="Save original messages and results to MCAP"),
+        DeclareLaunchArgument("save_mcap", default_value="true", description="Save original messages and results to MCAP"),
         DeclareLaunchArgument("realtime", default_value="true", description="Replay at the recorded rate"),
         DeclareLaunchArgument("half_resolution", default_value="true", description="Track at half camera resolution"),
         DeclareLaunchArgument("apply_imu_bias", default_value="true", description="Subtract calibrated IMU bias"),

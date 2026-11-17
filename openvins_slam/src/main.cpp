@@ -437,7 +437,7 @@ int main(int argc, char **argv) {
       if (overrides.count(legacy))
         throw std::runtime_error(std::string("removed parameter ") + legacy + "; use outdir, save_mcap and rviz2");
     const auto outdir = node->declare_parameter<std::string>("outdir", "");
-    const bool save_mcap = node->declare_parameter<bool>("save_mcap", false);
+    const bool save_mcap = node->declare_parameter<bool>("save_mcap", true);
     const bool visualize = node->declare_parameter<bool>("rviz2", false);
     std::string inferred_name;
     if (!overrides.count("config_name")) {
