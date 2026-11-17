@@ -26,7 +26,7 @@ slam_from_bag:
     # 是否将跟踪图像和稀疏特征点写入输出包；开启后会增加输出体积。
     record_debug: false
     # 是否启用零速度更新（ZUPT），由估计器检测静止条件后施加零速度约束。
-    try_zupt: false
+    try_zupt: true
     # 该数据包经轨迹精度测试选出的固定修正（秒），不是其他包的通用值。
     # 删除此项可恢复读取 calib.yaml 的 ROS.ImuTimeOffsetSec（缺失时为 0.0）。
     # 固定 IMU 时间修正，单位秒：计算时间 = 原始 IMU 时间 + 此值；当前提前 7 毫秒，不修改原始消息。
