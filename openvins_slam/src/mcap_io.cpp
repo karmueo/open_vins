@@ -140,14 +140,11 @@ public:
       ::unlink(temporary_.c_str());
   }
 
-  void open(const std::string &output_path, const std::string &input_path, McapInput &input) {
+  void open_writer(const std::string &output_path) {
     if (output_path.empty())
       throw std::invalid_argument("output MCAP path is empty");
-    const std::filesystem::path input_file = std::filesystem::weakly_canonical(std::filesystem::absolute(input_path));
     const std::filesystem::path output_file =
         std::filesystem::weakly_canonical(std::filesystem::absolute(output_path));
-    if (input_file == output_file)
-      throw std::runtime_error("input and output MCAP must be different files");
     const std::filesystem::path parent = output_file.parent_path();
     std::error_code error;
     std::filesystem::create_directories(parent, error);
@@ -168,6 +165,21 @@ public:
     options.compression = mcap::Compression::None;
     writer_open_ = true;
     writer_.open(file_, options);
+  }
+
+  void open(const std::string &output_path) {
+    open_writer(output_path);
+  }
+
+  void open(const std::string &output_path, const std::string &input_path, McapInput &input) {
+    if (output_path.empty())
+      throw std::invalid_argument("output MCAP path is empty");
+    const std::filesystem::path input_file = std::filesystem::weakly_canonical(std::filesystem::absolute(input_path));
+    const std::filesystem::path output_file =
+        std::filesystem::weakly_canonical(std::filesystem::absolute(output_path));
+    if (input_file == output_file)
+      throw std::runtime_error("input and output MCAP must be different files");
+    open_writer(output_path);
 
     const auto schemas = input.reader().schemas();
     std::vector<mcap::SchemaId> schema_ids;
@@ -212,7 +224,8 @@ public:
   }
 
   void write_serialized(const std::string &topic, const std::string &ros_type,
-                        const rclcpp::SerializedMessage &data, uint64_t stamp_ns) {
+                        const rclcpp::SerializedMessage &data, uint64_t stamp_ns,
+                        bool transient_local) {
     ensure_open();
     if (original_topics_.count(topic) != 0)
       throw std::runtime_error("output topic conflicts with an input topic: " + topic);
@@ -231,10 +244,11 @@ public:
       // rosbag2's MCAP plugin reads offered_qos_profiles from channel
       // metadata. Without it playback falls back to volatile durability,
       // preventing TF listeners from receiving the latched /tf_static.
-      // Match the live publishers in main.cpp: /tf uses a volatile depth-100
-      // queue; all other result and debug topics use transient-local depth 1.
-      const auto qos = topic == "/tf" ? rclcpp::QoS(100).reliable().durability_volatile()
-                                       : rclcpp::QoS(1).reliable().transient_local();
+      // Match the live publishers in VioProcessor: /tf (and raw sensor streams)
+      // use a volatile depth-100 queue; result and debug topics use transient-local depth 1.
+      const auto qos = (topic == "/tf" || !transient_local)
+                           ? rclcpp::QoS(100).reliable().durability_volatile()
+                           : rclcpp::QoS(1).reliable().transient_local();
       channel.metadata["offered_qos_profiles"] = rosbag2_storage::serialize_rclcpp_qos_vector({qos});
       writer_.addChannel(channel);
       channel_it = output_channels_.emplace(topic, OutputChannel{channel.id, ros_type, 0}).first;
@@ -305,6 +319,9 @@ private:
   rosbag2_cpp::LocalMessageDefinitionSource definitions_;
 };
 
+McapOutput::McapOutput(const std::string &output_path) : impl_(std::make_unique<Impl>()) {
+  impl_->open(output_path);
+}
 McapOutput::McapOutput(const std::string &output_path, const std::string &input_path, McapInput &input)
     : impl_(std::make_unique<Impl>()) {
   impl_->open(output_path, input_path, input);
@@ -312,8 +329,9 @@ McapOutput::McapOutput(const std::string &output_path, const std::string &input_
 McapOutput::~McapOutput() = default;
 void McapOutput::write_original(const mcap::MessageView &view) { impl_->write_original(view); }
 void McapOutput::write_serialized(const std::string &topic, const std::string &ros_type,
-                                  const rclcpp::SerializedMessage &data, uint64_t stamp_ns) {
-  impl_->write_serialized(topic, ros_type, data, stamp_ns);
+                                  const rclcpp::SerializedMessage &data, uint64_t stamp_ns,
+                                  bool transient_local) {
+  impl_->write_serialized(topic, ros_type, data, stamp_ns, transient_local);
 }
 void McapOutput::commit() { impl_->commit(); }
 

@@ -1,0 +1,140 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Ground grid
+      Enabled: true
+      Value: true
+      Reference Frame: <Fixed Frame>
+      Plane: XY
+      Cell Size: 0.5
+      Plane Cell Count: 20
+      Color: 110; 110; 110
+      Alpha: 0.5
+    - Class: rviz_default_plugins/TF
+      Name: TF frames
+      Enabled: true
+      Value: true
+      Show Axes: true
+      Show Names: true
+      Show Arrows: false
+      Marker Scale: 0.3
+      Frame Timeout: 60
+      Frames:
+        All Enabled: false
+        imu:
+          Value: true
+        odom:
+          Value: true
+    - Class: rviz_default_plugins/Path
+      Name: IMU trajectory
+      Enabled: true
+      Value: true
+      Color: 0; 255; 100
+      Line Style: Billboards
+      Line Width: 0.005
+      Pose Style: None
+      Buffer Length: 1
+      Topic:
+        Value: /openvins/path_imu_live
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Odometry
+      Name: IMU odometry
+      Enabled: true
+      Value: true
+      Keep: 1
+      Position Tolerance: 0
+      Angle Tolerance: 0
+      Shape:
+        Value: Axes
+        Axes Length: 0.25
+        Axes Radius: 0.02
+      Covariance:
+        Position:
+          Value: false
+        Orientation:
+          Value: false
+      Topic:
+        Value: /openvins/odom
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/PoseWithCovariance
+      Name: IMU pose
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /openvins/pose_imu
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Current sparse features
+      Enabled: true
+      Value: true
+      Color Transformer: FlatColor
+      Color: 255; 205; 30
+      Style: Points
+      Size (Pixels): 5
+      Decay Time: 0
+      Topic:
+        Value: /openvins/points
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Image
+      Name: Stereo video
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /stereo/image_raw/compressed
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Image
+      Name: Stereo feature tracks
+      Enabled: false
+      Value: false
+      Topic:
+        Value: /openvins/tracking_image
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+  Enabled: true
+  Global Options:
+    Background Color: 38; 38; 38
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 2.5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.8
+      Yaw: 0.8
+Window Geometry:
+  Width: 1500
+  Height: 900

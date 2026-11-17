@@ -31,6 +31,7 @@ private:
 // messages. Until commit succeeds, only a uniquely named temporary file exists.
 class McapOutput {
 public:
+  explicit McapOutput(const std::string &output_path);
   McapOutput(const std::string &output_path, const std::string &input_path, McapInput &input);
   ~McapOutput();
   McapOutput(const McapOutput &) = delete;
@@ -38,7 +39,8 @@ public:
 
   void write_original(const mcap::MessageView &view);
   void write_serialized(const std::string &topic, const std::string &ros_type,
-                        const rclcpp::SerializedMessage &data, uint64_t stamp_ns);
+                        const rclcpp::SerializedMessage &data, uint64_t stamp_ns,
+                        bool transient_local = true);
   void commit();
 
 private:
