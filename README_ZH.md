@@ -51,7 +51,9 @@ MCAP 流程使用 `/stereo/image_raw`（`sensor_msgs/msg/CompressedImage`，横�
 
 **换数据包必须重新核对 IMU 时间偏移。** 下文 `imu_time_offset_sec:=0.025` 仅为 EGO `job_004.mcap` 示例：原标定约 −5.089 ms 曾导致发散，独立诊断范围约 +25～30 ms，依据见[包说明](openvins_slam/README.md#参数)。未显式传入时使用 `ROS.ImuTimeOffsetSec`，标定未设置时为 `0.0`。发散时先检查时间偏移，再检查外参与偏置约定。
 
-## 3. MCAP 离线计算并导出 TUM 轨迹
+## 3. 离线计算
+
+### 3.1 MCAP 离线计算
 
 先编辑 [slam_from_bag.yaml](openvins_slam/config/slam_from_bag.yaml) 中 `slam_from_bag.ros__parameters` 下的配置，再从仓库根目录启动。设置 `rviz2: true` 可同时打开 RViz2，不改变 `realtime` 指定的处理速度。
 
@@ -77,7 +79,7 @@ ros2 launch openvins_slam slam_from_bag.launch.py \
 
 旧 launch 参数 `params_file` 已改为 `config`。`in_bag`、`cameras`、`outdir` 不再放入 YAML；旧参数或 YAML 中仍包含这些路径项时会报错并提示迁移。
 
-### YAML 配置项
+#### YAML 配置项
 
 文件采用 ROS 2 标准结构，不是相机标定文件，也不是 OpenVINS 的 `estimator_config.yaml`：
 
@@ -108,6 +110,7 @@ slam_from_bag:
 | `half_resolution` | 每目宽高减半后跟踪 | 行为控制项 | 示例及省略时均为 `true`，如 1920×1080 → 960×540 |
 | `apply_imu_bias` | 预减标定偏置 | 行为控制项 | 示例及省略时均为 `true`；输入已扣偏置时改为 `false` |
 | `record_debug` | 将跟踪图与稀疏点写包 | 行为控制项 | 示例及省略时均为 `false`；开启会明显增大文件体积 |
+| `record_points` | 将稀疏点写包 | 行为控制项 | 省略时为 `true`；关闭点云录制须同时将 `record_debug` 设为 `false` |
 | `imu_time_offset_sec` | 固定 IMU 时间修正，单位秒 | 输入值 | 调优示例 `-0.007`；省略时取标定的 `ROS.ImuTimeOffsetSec`，标定缺失时为 `0.0`；必须有限且在 `[-10, 10]` 内 |
 | `try_zupt` | 零速度更新开关 | 行为控制项 | 示例 `false`；省略时继承估计器配置，当前 `false` |
 | `num_pts` | 运行阶段两目合计目标特征数 | 输入值 | 示例 `400`；省略时继承估计器配置，当前 `200`，每目分配 `floor(num_pts/2)` |
@@ -150,7 +153,7 @@ TUM 无表头，每行 `timestamp tx ty tz qx qy qz qw`，坐标系为 `odom →
 
 成功的离线处理打印 `PERFORMANCE`：`average_fps` 包含读写解码，`slam_average_fps` 仅统计估计器调用耗时。更多依据见[节点实现](openvins_slam/src/main.cpp)、[参数处理](openvins_slam/src/runtime_options.cpp)及[轨迹写入实现](openvins_slam/src/trajectory_writer.cpp)。
 
-### 校验结果包
+#### 校验结果包
 
 当前 Python 环境需已安装 `mcap` 和 `mcap-ros2-support`。
 
@@ -168,6 +171,30 @@ ros2 run openvins_slam verify_mcap.py \
 | `source`（第一个位置参数） | 指定原始包 | 输入文件 | 必填，无默认值；MCAP 文件 |
 | `output`（第二个位置参数） | 指定待校验结果包 | 输入文件 | 必填，无默认值；MCAP 文件 |
 | `-h`、`--help` | 显示帮助 | 行为控制项 | 默认不启用 |
+
+### 3.2 RAW 数据离线计算
+
+无需预先打包 MCAP，可使用 `slam_from_raw.launch.py` 直接读取 `ego_data_collector` 保存的原始数据目录并导出 TUM 轨迹与可选 MCAP（实现见[原始数据读取](openvins_slam/src/raw_io.cpp)与[节点实现](openvins_slam/src/slam_from_raw.cpp)）：
+
+- **目录约定**：`in_raw` 下需包含 `images/` 目录以及 `aligned/image_timestamps.txt`、`aligned/imu.csv`（也兼容直接放在 `in_raw/` 根目录）。
+- **时间与文件绑定**：逐行读取 `image_timestamps.txt` 的 `image_file` 列去 `images/` 下加载图片，并以 `cam_time_ns` 列作为精确时间戳（不从文件名解析时间，允许首帧 `ts_ns`、`stc_ns` 为 `-1` 或 `NA`）；`imu.csv` 的 `time_ns` 与 `cam_time_ns` 已对齐到同一纳秒时间轴，程序按时间顺序归并送入 VIO 估计器。
+
+```bash
+# 使用源码目录中的 YAML，离线处理 RAW 目录并导出 TUM 轨迹与可选 MCAP
+ros2 launch openvins_slam slam_from_raw.launch.py \
+  config:="$(pwd)/openvins_slam/config/slam_from_bag.yaml" \
+  in_raw:=/path/to/raw_dir \
+  cameras:=/path/to/calib.yaml
+```
+
+| 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
+| --- | --- | --- | --- |
+| `config` | 选择 ROS 2 参数 YAML | 输入文件 | 默认包安装目录的 `config/slam_from_bag.yaml`；同时兼容 `slam_from_raw:` 与 `slam_from_bag:` 命名空间 |
+| `in_raw` | 指定输入 RAW 数据目录 | 输入目录 | 必填，需包含 `images/` 与对齐后的时间/IMU 文件 |
+| `cameras` | 指定相机与 IMU 标定 | 输入文件 | 选传；省略或为空时依次查找 `<in_raw>/calib.yaml` 与 `<in_raw>/../calib.yaml`，找不到时报错 |
+| `outdir` | 指定结果目录 | 输出目录 | 选传；省略或为空时创建 `<启动工作目录>/output/<输入目录名>_<YYYYMMDDHHMMSS>`；显式指定时直接使用该目录 |
+
+输出文件命名规则与 3.1 节一致：生成 `openvins_<输入目录名>_<配置文件名>_trajectory.txt`，当 `save_mcap: true` 时额外生成 `openvins_<输入目录名>_<配置文件名>.mcap`（包含原始 `/imu`、`/stereo/image_raw` 与 `/openvins/*` 结果话题；`record_points` 默认为 `true`，可记录 `/openvins/points` 稀疏点云以便第 5 节回放查看）。YAML 中其余算法与时间偏移参数规则同 3.1 节。
 
 ## 4. 接入 ROS2 实时数据
 
@@ -250,69 +277,34 @@ ros2 run ov_msckf run_subscribe_msckf \
 
 ### 回放已生成的结果包
 
-实时计算直接使用第 4.1 节。回放已有结果包时，在两个已加载环境的终端分别执行：
+使用 `replay_mcap.launch.py` 可同时启动 `rviz2`、实时轨迹累加节点（由 `/openvins/pose_imu` 实时生成 `/openvins/path_imu_live`）以及 `ros2 bag play --clock`：
 
 ```bash
-# 回放结果包并发布仿真时钟
-ros2 bag play \
-  /path/to/openvins_job_004_slam_from_bag.mcap \
-  --clock
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch openvins_slam replay_mcap.launch.py \
+  in_bag:=/path/to/result.mcap
 ```
 
-包内每条 `/openvins/path_*` 仅录制一条最终完整轨迹，到最后一帧有效位姿才出现；逐帧 Pose、odom 和动态 TF 可显示此前运动过程。[输出约定](openvins_slam/README.md#结果话题)还包括 `/openvins/pose_imu`、`/openvins/pose_cam0`、`/openvins/pose_cam1`、`/openvins/odom`、`/tf` 和 `/tf_static`。`/openvins/odom` 每次有效视觉更新一条，`frame_id=odom`、`child_frame_id=imu`，包含 IMU 系速度，无需 `record_debug`。跟踪图与稀疏点仅在 `record_debug=true` 时写包。离线模式不发布到 DDS，`realtime=true` 时才发布。
+默认加载 [replay_mcap.rviz](openvins_slam/launch/replay_mcap.rviz)，仅显示 IMU 实时轨迹（`/openvins/path_imu_live`）、IMU 位姿（`/openvins/pose_imu` / `/openvins/odom`）、稀疏特征点（`/openvins/points`）及双目压缩视频（将 `stereo_topic` 统一重映射为 `/stereo/image_raw/compressed`，支持输入话题已带 `/compressed` 后缀）。回放结束后 RViz2 保持当前画面，关闭 RViz2 窗口即自动退出。
 
-| 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
-| --- | --- | --- | --- |
-| 包路径（位置参数） | 指定回放包 | 输入文件 | 此处必填；已生成的结果 MCAP |
-| `--clock` | 发布仿真时钟 | 行为控制项 | 默认不启用；此处启用 |
-| `--remap` | 重映射话题 | 输入值 | 默认无重映射；例如 `/openvins/odom:=/odom`；节点无 `odom_topic` 参数 |
+需要回放点云时，在录制用 YAML 的 `ros__parameters` 下设置 `record_points: true`（默认值）。`record_debug: true` 也会写入点云。
+
+回放通过 ROS 服务恢复和暂停。使用 `start_paused:=true` 时，等待播放器启动后，在另一个已加载 ROS 环境的终端执行以下命令；启动日志也会显示服务命令。
 
 ```bash
-# 用项目配置打开 RViz2 并使用仿真时间
-rviz2 \
-  -d "$(ros2 pkg prefix --share openvins_slam)/launch/bag_slam.rviz" \
-  --ros-args \
-  -p use_sim_time:=true
+# 恢复播放
+ros2 service call /openvins_replay_player/resume rosbag2_interfaces/srv/Resume '{}'
+# 暂停播放
+ros2 service call /openvins_replay_player/pause rosbag2_interfaces/srv/Pause '{}'
 ```
 
-`rviz2` 参数：
-
-| 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
-| --- | --- | --- | --- |
-| `-d` | 加载显示配置 | 输入文件 | 未指定时使用 RViz2 自身默认配置；此处为项目 `bag_slam.rviz` |
-| `--ros-args`、`-p use_sim_time:=值` | 设置仿真时间参数 | 行为控制项 | `use_sim_time` 默认 `false`；支持 `true`、`false` |
-
-命令替换中的 `ros2 pkg prefix` 参数：
-
-| 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
-| --- | --- | --- | --- |
-| 包名（位置参数） | 指定已安装的 ROS 2 包 | 输入值 | 必填，无默认值；此处为 `openvins_slam` |
-| `--share` | 返回包的共享资源路径 | 行为控制项 | 默认返回安装前缀；此处返回 share 目录 |
-
-### 用 matplotlib 快速查看 TUM
-
-在已安装 NumPy 和 matplotlib 的 Python 环境中运行，先把文件名改为实际 TUM 路径；需至少两行有效数据。
-
-```python
-# 绘制 TUM 轨迹的 XY 平面与高度变化
-import numpy as np
-import matplotlib.pyplot as plt
-
-d = np.loadtxt("job_004.txt")
-fig, ax = plt.subplots(1, 2, figsize=(9, 3.5))
-ax[0].plot(d[:, 1], d[:, 2])
-ax[0].set(xlabel="x [m]", ylabel="y [m]", title="XY", aspect="equal")
-ax[1].plot(d[:, 0] - d[0, 0], d[:, 3])
-ax[1].set(xlabel="t [s]", ylabel="z [m]", title="Z")
-plt.tight_layout()
-plt.show()
-```
-
-| 支持的参数／配置项 | 参数作用 | 输入/输出 | 默认值/支持的值 |
-| --- | --- | --- | --- |
-| `np.loadtxt` 的文件路径（代码配置项） | 指定 TUM 轨迹 | 输入文件 | 必须设置；示例 `job_004.txt` 相对于 Python 进程工作目录；八列数值，无表头 |
-| `figsize`（代码配置项） | 设置画布尺寸（英寸） | 行为控制项 | 示例显式设为 `(9, 3.5)`，非库默认值 |
-
-<a id="7-限制与排错"></a>
-
-发生错误时按对应步骤中的输入、时间偏移和输出路径要求核对；详细实现与已有验收记录见[包说明](openvins_slam/README.md)和[验收报告](openvins_slam/ACCEPTANCE.md)。
+| Launch 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `in_bag` | 必填 | 已生成的结果 MCAP 文件路径（支持相对路径与 `~` 展开）。 |
+| `rate` | `1.0` | 回放倍速（需大于 `0`）。 |
+| `loop` | `false` | 是否循环回放（`true` / `false`）。 |
+| `start_paused` | `false` | 是否以暂停状态启动（`true` / `false`）；使用上述 ROS 服务恢复/暂停。 |
+| `delay_sec` | `1.5` | 启动 `ros2 bag play` 前等待 RViz2 完成订阅的延时秒数（`>= 0`）。 |
+| `stereo_topic` | `/stereo/image_raw` | MCAP 中的双目压缩图话题；统一重映射为 `/stereo/image_raw/compressed` 供 RViz2 显示。 |
+| `rviz_config` | `openvins_slam/launch/replay_mcap.rviz` | 自定义 `.rviz` 配置文件路径。 |
