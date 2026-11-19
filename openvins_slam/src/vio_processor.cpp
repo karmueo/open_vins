@@ -45,7 +45,7 @@ VioProcessor::VioProcessor(const rclcpp::Node::SharedPtr &node, const Calibratio
                            bool visualize, bool apply_bias, bool record_debug, bool record_points,
                            std::string imu_source, std::string stereo_source, McapOutput *output,
                            TrajectoryWriter *trajectory, ov_msckf::VioManagerOptions options)
-    : node_(node), calibration_(calibration), realtime_(realtime), publish_results_(realtime || visualize),
+    : node_(node), calibration_(calibration), publish_results_(realtime || visualize),
       apply_bias_(apply_bias), record_debug_(record_debug), record_points_(record_points),
       imu_source_(std::move(imu_source)), stereo_source_(std::move(stereo_source)), output_(output),
       trajectory_(trajectory) {
@@ -72,10 +72,6 @@ VioProcessor::VioProcessor(const rclcpp::Node::SharedPtr &node, const Calibratio
 
 template <typename Fn>
 void VioProcessor::measure_slam(Fn &&feed) {
-  if (realtime_) {
-    feed();
-    return;
-  }
   const auto start = std::chrono::steady_clock::now();
   feed();
   slam_compute_duration_ += std::chrono::steady_clock::now() - start;

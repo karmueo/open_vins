@@ -64,7 +64,7 @@ private:
 
   rclcpp::Node::SharedPtr node_;
   const Calibration calibration_;
-  bool realtime_, publish_results_, apply_bias_, record_debug_, record_points_;
+  bool publish_results_, apply_bias_, record_debug_, record_points_;
   bool online_time_ = false, online_extrinsics_ = false, have_propagation_ = false;
   double init_window_time_ = 2.0;
   int64_t first_imu_ns_ = 0, last_propagation_ns_ = 0;

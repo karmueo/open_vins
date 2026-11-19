@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
     processor.finish();
     openvins_slam::commit_outputs(trajectory.get(), output.get(), outbag);
     const auto processing_end = std::chrono::steady_clock::now();
-    if (!realtime && rclcpp::ok()) processor.report_performance(processing_end - processing_start);
+    if (rclcpp::ok()) processor.report_performance(processing_end - processing_start);
     if (realtime || visualize) processor.hold();
   } catch (const std::exception &e) {
     std::cerr << "slam_from_raw: " << e.what() << std::endl;
