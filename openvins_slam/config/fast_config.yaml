@@ -4,7 +4,7 @@
 slam_from_bag:
   ros__parameters:
     # 可选保存原始消息与定位结果。
-    save_mcap: true
+    save_mcap: false
     # 启动 RViz2；不改变 realtime 处理速度，结束后保留最后画面。
     rviz2: false
     stereo_topic: "/stereo/image_raw"
