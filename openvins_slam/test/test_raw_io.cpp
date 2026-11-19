@@ -53,33 +53,68 @@ TEST_F(RawIoTest, AlignedLayoutUsesCamTimeNsAndMergesChronologically) {
              "1000,0.4,0.5,0.6,0.1,9.7,0.1\r\n"
              "2500,0.7,0.8,0.9,0.2,9.6,0.2\r\n");
 
-  openvins_slam::RawDataset dataset(root.string());
-  EXPECT_EQ(dataset.image_count(), 2u);
-  EXPECT_EQ(dataset.imu_count(), 3u);
+  const openvins_slam::RawDataset uncached(root.string(), false);
+  const openvins_slam::RawDataset cached(root.string());
+  for (const auto *dataset : {&uncached, &cached}) {
+    EXPECT_EQ(dataset->image_count(), 2u);
+    EXPECT_EQ(dataset->imu_count(), 3u);
+  }
 
-  std::vector<std::string> events;
-  dataset.for_each(
-      [&](const openvins_slam::RawImuSample &s) {
-        events.push_back("imu:" + std::to_string(s.time_ns));
-        if (s.time_ns == 1000) {
-          EXPECT_DOUBLE_EQ(s.gyro.x(), 0.4);
-          EXPECT_DOUBLE_EQ(s.accel.y(), 9.7);
-        }
-        return true;
-      },
-      [&](const openvins_slam::RawImageEntry &img, std::vector<uint8_t> &&bytes, const std::string &format) {
-        events.push_back("img:" + std::to_string(img.cam_time_ns) + ":" + format + ":" +
-                         std::string(bytes.begin(), bytes.end()));
-        return true;
-      });
+  // 收集两种读取模式交给回调的内容和时间顺序。
+  const auto collect_events = [](const openvins_slam::RawDataset &dataset) {
+    std::vector<std::string> events;
+    dataset.for_each(
+        [&](const openvins_slam::RawImuSample &s) {
+          events.push_back("imu:" + std::to_string(s.time_ns));
+          if (s.time_ns == 1000) {
+            EXPECT_DOUBLE_EQ(s.gyro.x(), 0.4);
+            EXPECT_DOUBLE_EQ(s.accel.y(), 9.7);
+          }
+          return true;
+        },
+        [&](const openvins_slam::RawImageEntry &img, std::vector<uint8_t> &&bytes, const std::string &format) {
+          events.push_back("img:" + std::to_string(img.cam_time_ns) + ":" + format + ":" +
+                           std::string(bytes.begin(), bytes.end()));
+          return true;
+        });
+    return events;
+  };
 
-  EXPECT_EQ(events, (std::vector<std::string>{
-                        "imu:500",
-                        "imu:1000",
-                        "img:1000:jpeg:JPG1",
-                        "img:2000:jpeg:JPG2",
-                        "imu:2500",
-                    }));
+  const auto uncached_events = collect_events(uncached);
+  EXPECT_EQ(uncached_events, (std::vector<std::string>{
+                                "imu:500",
+                                "imu:1000",
+                                "img:1000:jpeg:JPG1",
+                                "img:2000:jpeg:JPG2",
+                                "imu:2500",
+                            }));
+  // 修改和删除源图片后，关闭缓存的模式应在遍历时看到磁盘变化。
+  const auto first_image = root / "images" / "frame_000001_stc_NA_ts_NA.jpg";
+  write_file(first_image, "NEW");
+  EXPECT_EQ(collect_events(uncached).at(2), "img:1000:jpeg:NEW");
+  ASSERT_TRUE(fs::remove(first_image));
+  EXPECT_THROW(collect_events(uncached), std::runtime_error);
+  EXPECT_EQ(collect_events(cached), uncached_events);
+  EXPECT_EQ(collect_events(cached), uncached_events);
+}
+
+/// @brief 验证取消检查发生在读取下一张图片之前。
+TEST_F(RawIoTest, PreloadStopsBeforeReadingNextImageWhenCancelled) {
+  write_file(directory_ / "images" / "first.jpg", "JPG1");
+  write_file(directory_ / "images" / "second.jpg", "");
+  write_file(directory_ / "image_timestamps.txt", "image_file,cam_time_ns\nfirst.jpg,1000\nsecond.jpg,2000\n");
+  write_file(directory_ / "imu.csv",
+             "time_ns,gyro_x_rad_s,gyro_y_rad_s,gyro_z_rad_s,acc_x_m_s2,acc_y_m_s2,acc_z_m_s2\n"
+             "500,0,0,0,0,0,9.8\n");
+
+  int checks = 0; ///< 允许读取第一张图，在第二次检查时取消。
+  try {
+    openvins_slam::RawDataset(directory_.string(), true, [&] { return ++checks == 2; });
+    FAIL() << "Expected preloading to stop on cancellation";
+  } catch (const std::runtime_error &error) {
+    EXPECT_STREQ(error.what(), "RAW image preloading interrupted");
+  }
+  EXPECT_EQ(checks, 2);
 }
 
 TEST_F(RawIoTest, FlatLayoutSupportsReorderedColumnsAndPngFormat) {

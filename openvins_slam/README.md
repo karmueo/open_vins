@@ -72,6 +72,9 @@ ros2 launch openvins_slam slam_from_raw.launch.py \
 - 图片路径逐行读取 `image_timestamps.txt` 中的 `image_file`（到 `<in_raw>/images/` 下加载），时间戳严格使用 `cam_time_ns` 列（不从文件名解析时间，允许首帧 `ts_ns`/`stc_ns` 为 `-1` 或 `NA`）。
 - IMU 逐行读取 `imu.csv` 的 `time_ns`、`gyro_*_rad_s` 和 `acc_*_m_s2`，与 `cam_time_ns` 在同一纳秒时间轴上按时间顺序配对。
 - `cameras` 省略时依次查找 `<in_raw>/calib.yaml` 与 `<in_raw>/../calib.yaml`；`slam_from_raw.launch.py` 同时支持 `slam_from_raw:` 或 `slam_from_bag:` 节点名配置。
+- `cache` 默认开启，计算前将全部 JPEG/PNG 压缩字节、图片索引和 IMU 样本存入内存。关闭后继续预加载索引和 IMU，计算时逐帧从磁盘读图。开启缓存需要为整批压缩图片预留内存。
+- 在 `config` 选择的 YAML 的 `ros__parameters` 中设置 `save_mcap`。默认开启，设为 `false` 时只输出 TUM 轨迹。缓存可通过启动参数 `cache:=false` 覆盖 YAML。
+- RAW 处理成功后，`PERFORMANCE` 中的 `slam_average_fps` 为双目帧数除以 OpenVINS 处理相机与 IMU 输入的累计耗时。该指标排除预加载、读图、解码、写文件、ROS 发布和回放等待。
 
 ## RViz2 与处理速度
 

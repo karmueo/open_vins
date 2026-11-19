@@ -51,6 +51,8 @@ int main(int argc, char **argv) {
     const auto in_raw = node->declare_parameter<std::string>("in_raw", "");
     openvins_slam::reject_legacy_parameters(*node);
     const auto outdir = node->declare_parameter<std::string>("outdir", "");
+    // 开启时在计算前把全部压缩图像载入内存。
+    const bool cache = node->declare_parameter<bool>("cache", true);
     const bool save_mcap = node->declare_parameter<bool>("save_mcap", true);
     const bool visualize = node->declare_parameter<bool>("rviz2", false);
     const auto config_name = openvins_slam::resolve_config_name(*node);
@@ -78,7 +80,10 @@ int main(int argc, char **argv) {
     openvins_slam::resolve_imu_time_offset(*node, calibration);
     auto options = calibration.make_options(half_resolution);
     openvins_slam::configure_options(*node, options);
-    openvins_slam::RawDataset input(in_raw);
+    if (cache) RCLCPP_INFO(node->get_logger(), "Loading RAW input into memory: %s", in_raw.c_str());
+    // 节点关闭后停止预加载，并在创建输出前检查最后一次读图期间的中断。
+    openvins_slam::RawDataset input(in_raw, cache, [] { return !rclcpp::ok(); });
+    if (!rclcpp::ok()) throw std::runtime_error("processing interrupted; output was not committed");
     RCLCPP_INFO(node->get_logger(), "Raw input: images=%zu (%s), imu=%zu (%s)",
                 input.image_count(), input.image_timestamps_path().c_str(),
                 input.imu_count(), input.imu_csv_path().c_str());

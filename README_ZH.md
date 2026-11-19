@@ -177,7 +177,7 @@ ros2 run openvins_slam verify_mcap.py \
 无需预先打包 MCAP，可使用 `slam_from_raw.launch.py` 直接读取 `ego_data_collector` 保存的原始数据目录并导出 TUM 轨迹与可选 MCAP（实现见[原始数据读取](openvins_slam/src/raw_io.cpp)与[节点实现](openvins_slam/src/slam_from_raw.cpp)）：
 
 - **目录约定**：`in_raw` 下需包含 `images/` 目录以及 `aligned/image_timestamps.txt`、`aligned/imu.csv`（也兼容直接放在 `in_raw/` 根目录）。
-- **时间与文件绑定**：逐行读取 `image_timestamps.txt` 的 `image_file` 列去 `images/` 下加载图片，并以 `cam_time_ns` 列作为精确时间戳（不从文件名解析时间，允许首帧 `ts_ns`、`stc_ns` 为 `-1` 或 `NA`）；`imu.csv` 的 `time_ns` 与 `cam_time_ns` 已对齐到同一纳秒时间轴，程序按时间顺序归并送入 VIO 估计器。
+- **时间与文件绑定**：使用 `image_timestamps.txt` 的 `image_file` 定位 `images/` 下的图片，以 `cam_time_ns` 作为图片时间戳。首帧的 `ts_ns`、`stc_ns` 可为 `-1` 或 `NA`。程序按 `cam_time_ns` 与 `imu.csv` 的 `time_ns` 归并后送入 VIO。
 
 ```bash
 # 使用源码目录中的 YAML，离线处理 RAW 目录并导出 TUM 轨迹与可选 MCAP
@@ -193,6 +193,12 @@ ros2 launch openvins_slam slam_from_raw.launch.py \
 | `in_raw` | 指定输入 RAW 数据目录 | 输入目录 | 必填，需包含 `images/` 与对齐后的时间/IMU 文件 |
 | `cameras` | 指定相机与 IMU 标定 | 输入文件 | 选传；省略或为空时依次查找 `<in_raw>/calib.yaml` 与 `<in_raw>/../calib.yaml`，找不到时报错 |
 | `outdir` | 指定结果目录 | 输出目录 | 选传；省略或为空时创建 `<启动工作目录>/output/<输入目录名>_<YYYYMMDDHHMMSS>`；显式指定时直接使用该目录 |
+| `cache` | 预加载压缩图片 | 行为控制项 | 默认 `true`，启动时预读全部 JPEG/PNG；设为 `false` 时在计算中逐帧读图。两种模式均在启动时加载图片索引和 IMU |
+| `save_mcap` | 保存原始消息与结果 MCAP | YAML 配置项 | 默认 `true`，在 `config` 选择的 YAML 中设为 `false` 时只保存 TUM 轨迹 |
+
+`cache` 和 `save_mcap` 可写入所选 YAML 的 `ros__parameters`。启动时可追加 `cache:=false` 覆盖缓存设置。开启缓存需要容纳全部压缩图片的内存，图片在计算时按帧解码。
+
+处理成功后查看 `PERFORMANCE` 中的 `slam_average_fps`。它用送入 OpenVINS 的双目帧数除以估计器处理相机和 IMU 的累计耗时，排除磁盘读取、预加载、图片解码、文件写入、ROS 发布和回放等待。一对双目图像计为一帧。
 
 输出文件命名规则与 3.1 节一致：生成 `openvins_<输入目录名>_<配置文件名>_trajectory.txt`，当 `save_mcap: true` 时额外生成 `openvins_<输入目录名>_<配置文件名>.mcap`（包含原始 `/imu`、`/stereo/image_raw` 与 `/openvins/*` 结果话题；`record_points` 默认为 `true`，可记录 `/openvins/points` 稀疏点云以便第 5 节回放查看）。YAML 中其余算法与时间偏移参数规则同 3.1 节。
 

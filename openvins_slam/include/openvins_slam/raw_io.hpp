@@ -1,3 +1,7 @@
+/**
+ * @file raw_io.hpp
+ * @brief 声明 RAW 数据集及按时间顺序遍历图像和 IMU 的接口。
+ */
 #pragma once
 
 #include <cstdint>
@@ -23,7 +27,15 @@ struct RawImageEntry {
 
 class RawDataset {
 public:
-  explicit RawDataset(const std::string &directory);
+  /**
+   * @brief 加载图片索引和 IMU 样本，可同时预加载压缩图像。
+   * @param[in] directory RAW 数据目录。
+   * @param[in] cache 是否预加载全部压缩图像。
+   * @param[in] should_cancel 可选的取消回调，每次预加载读图前调用。
+   * @throws std::runtime_error 预加载期间取消，或 RAW 输入读取失败。
+   */
+  explicit RawDataset(const std::string &directory, bool cache = true,
+                      const std::function<bool()> &should_cancel = {});
 
   const std::string &directory() const { return directory_; }
   const std::string &images_directory() const { return images_directory_; }
@@ -32,8 +44,11 @@ public:
   std::size_t imu_count() const { return imu_.size(); }
   std::size_t image_count() const { return images_.size(); }
 
-  // Streams IMU and image entries in non-decreasing nanosecond timestamp order,
-  // reading image bytes lazily per frame. Returning false stops early.
+  /**
+   * @brief 按时间戳归并图像和 IMU，按缓存设置获取图像字节。
+   * @param[in] on_imu IMU 样本回调，返回 false 时提前停止。
+   * @param[in] on_image 图片回调，返回 false 时提前停止。
+   */
   void for_each(const std::function<bool(const RawImuSample &)> &on_imu,
                 const std::function<bool(const RawImageEntry &, std::vector<uint8_t> &&, const std::string &format)> &on_image) const;
 
@@ -44,6 +59,7 @@ private:
   std::string imu_csv_path_;
   std::vector<RawImuSample> imu_;
   std::vector<RawImageEntry> images_;
+  std::vector<std::vector<uint8_t>> cached_images_; ///< 按图片索引保存的压缩字节，空表示逐帧读图。
 };
 
 } // namespace openvins_slam

@@ -1,4 +1,4 @@
-"""Launch raw-directory stereo-inertial VIO processing with a ROS 2 parameter file."""
+"""使用 ROS 2 参数文件启动 RAW 目录的双目惯性里程计。"""
 
 from datetime import datetime
 from pathlib import Path
@@ -27,11 +27,23 @@ def _extract_parameters(context, config):
 def _make_node(context):
     if "params_file" in context.launch_configurations:
         raise ValueError("removed launch argument params_file; use config:=/path/to/config.yaml")
+    if "save_mcap" in context.launch_configurations:
+        raise ValueError("removed launch argument save_mcap; set save_mcap in the YAML selected by config")
     requested_file = Path(LaunchConfiguration("config").perform(context)).expanduser()
     config = requested_file.resolve()
     if not config.is_file():
         raise FileNotFoundError(f"config is not a regular file: {config}")
     values = _extract_parameters(context, config)
+    # 缓存启动参数覆盖 YAML，省略时使用 YAML 或节点默认值。
+    cache_override = LaunchConfiguration("cache", default="").perform(context)
+    if cache_override:
+        if cache_override not in ("true", "false"):
+            raise ValueError("cache must be true or false")
+        values["cache"] = cache_override == "true"
+    elif type(values.get("cache", True)) is not bool:
+        raise ValueError("cache must be true or false")
+    if type(values.get("save_mcap", True)) is not bool:
+        raise ValueError("save_mcap must be true or false in the config YAML")
     visualize = values.get("rviz2", False)
     if type(visualize) is not bool:
         raise ValueError("rviz2 must be true or false")
@@ -109,6 +121,10 @@ def generate_launch_description():
             "outdir",
             default_value="",
             description="Output directory; defaults to ./output/<in_raw_name>_<YYYYMMDDHHMMSS>",
+        ),
+        DeclareLaunchArgument(
+            "cache", default_value="",
+            description="Preload compressed images (true/false; defaults to YAML or true)",
         ),
         OpaqueFunction(function=_make_node),
     ])

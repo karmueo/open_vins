@@ -1,3 +1,7 @@
+/**
+ * @file raw_io.cpp
+ * @brief 读取 RAW 图像、时间戳索引和 IMU 样本，并按时间戳归并。
+ */
 #include "openvins_slam/raw_io.hpp"
 
 #include <algorithm>
@@ -110,7 +114,14 @@ bool next_data_line(std::ifstream &stream, std::string &line, std::size_t &line_
 
 } // namespace
 
-RawDataset::RawDataset(const std::string &directory) {
+/**
+ * @brief 校验并加载 RAW 输入，按配置预加载压缩图片。
+ * @param[in] directory RAW 数据目录。
+ * @param[in] cache 是否预加载全部压缩图像。
+ * @param[in] should_cancel 可选的取消回调，每次预加载读图前调用。
+ * @throws std::runtime_error 预加载期间取消，或 RAW 输入读取失败。
+ */
+RawDataset::RawDataset(const std::string &directory, bool cache, const std::function<bool()> &should_cancel) {
   if (directory.empty()) throw std::runtime_error("parameter in_raw is required");
   std::error_code ec;
   const fs::path root(directory);
@@ -225,8 +236,21 @@ RawDataset::RawDataset(const std::string &directory) {
     if (imu_.empty())
       throw std::runtime_error("imu.csv contains no IMU samples: " + imu_csv_path_);
   }
+
+  if (cache) {
+    cached_images_.reserve(images_.size());
+    for (const auto &entry : images_) {
+      if (should_cancel && should_cancel()) throw std::runtime_error("RAW image preloading interrupted");
+      cached_images_.push_back(read_binary_file(entry.image_path));
+    }
+  }
 }
 
+/**
+ * @brief 从缓存或磁盘获取图像，并与 IMU 按时间戳归并。
+ * @param[in] on_imu IMU 样本回调，返回 false 时提前停止。
+ * @param[in] on_image 图片回调，返回 false 时提前停止。
+ */
 void RawDataset::for_each(
     const std::function<bool(const RawImuSample &)> &on_imu,
     const std::function<bool(const RawImageEntry &, std::vector<uint8_t> &&, const std::string &)> &on_image) const {
@@ -240,7 +264,8 @@ void RawDataset::for_each(
       ++imu_idx;
     } else {
       const auto &entry = images_[img_idx];
-      auto bytes = read_binary_file(entry.image_path);
+      // 为回调提供独立的字节缓冲区，使同一数据集可以重复遍历。
+      auto bytes = cached_images_.empty() ? read_binary_file(entry.image_path) : cached_images_[img_idx];
       const auto format = image_format_for_path(entry.image_path);
       if (!on_image(entry, std::move(bytes), format)) return;
       ++img_idx;
