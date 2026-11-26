@@ -41,7 +41,8 @@ target_link_libraries(slam_from_raw mcap_vendor::mcap yaml-cpp Eigen3::Eigen ${O
 install(TARGETS slam_from_bag slam_from_raw DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 install(FILES README.md ACCEPTANCE.md DESTINATION share/${PROJECT_NAME})
-install(PROGRAMS test/verify_mcap.py scripts/replay_path_node.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS test/verify_mcap.py scripts/replay_path_node.py scripts/calibrate_time_offset.py
+  DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -49,6 +50,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_bag_launch test/test_bag_launch.py)
   ament_add_pytest_test(test_raw_launch test/test_raw_launch.py)
   ament_add_pytest_test(test_replay_launch test/test_replay_launch.py)
+  ament_add_pytest_test(test_calibrate_time_offset test/test_calibrate_time_offset.py)
   ament_add_gtest(test_trajectory_writer test/test_trajectory_writer.cpp src/trajectory_writer.cpp)
   target_include_directories(test_trajectory_writer PRIVATE include)
   ament_target_dependencies(test_trajectory_writer geometry_msgs)

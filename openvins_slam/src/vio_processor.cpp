@@ -105,8 +105,10 @@ void VioProcessor::add_imu(int64_t raw_ns, const Eigen::Vector3d &gyro, const Ei
   last_imu_raw_ns_ = raw_ns;
   ++imu_count_;
   set_anchor(raw_ns);
+  // 零起点数据应用负偏移后可以得到负的计算时间戳，输出仍使用原始时间戳。
   if ((offset_ns_ > 0 && raw_ns > std::numeric_limits<int64_t>::max() - offset_ns_) ||
-      (offset_ns_ < 0 && raw_ns < -offset_ns_)) throw std::runtime_error("IMU time offset overflows timestamp");
+      (offset_ns_ < 0 && raw_ns < std::numeric_limits<int64_t>::min() - offset_ns_))
+    throw std::runtime_error("IMU time offset overflows timestamp");
   ImuSample sample;
   sample.ns = raw_ns + offset_ns_;
   if (imu_count_ == 1) first_imu_ns_ = sample.ns;

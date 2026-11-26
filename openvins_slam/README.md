@@ -76,6 +76,30 @@ ros2 launch openvins_slam slam_from_raw.launch.py \
 - 在 `config` 选择的 YAML 的 `ros__parameters` 中设置 `save_mcap`。默认开启，设为 `false` 时只输出 TUM 轨迹。缓存可通过启动参数 `cache:=false` 覆盖 YAML。
 - RAW 处理成功后，`PERFORMANCE` 中的 `slam_average_fps` 为双目帧数除以 OpenVINS 处理相机与 IMU 输入的累计耗时。该指标排除预加载、读图、解码、写文件、ROS 发布和回放等待。
 
+### 标定 RAW 相机与 IMU 的时差
+
+选一段有明显转动的 RAW 采集，预览估计结果。工具用双目估计的旋转匹配陀螺积分，报告有效窗口数、旋转误差和按秒分块重采样区间。
+
+```bash
+ros2 run openvins_slam calibrate_time_offset.py \
+  --in-raw /path/to/raw_dir --cameras /path/to/calib.yaml
+```
+
+`--cameras` 省略时，按 RAW 启动入口的顺序查找传入目录及其父目录中的 `calib.yaml`。加入 `--write` 后，工具在拟合通过质量检查时备份该文件并更新 `ROS.ImuTimeOffsetSec`。最优偏移下，旋转误差不超过 `0.020 rad`（约 `1.15°`）的窗口须超过半数。偏移单位为秒，直接加到 IMU 时间戳上。例如，`-0.020` 使 IMU 的计算时间提前 20 毫秒。
+
+```bash
+ros2 run openvins_slam calibrate_time_offset.py \
+  --in-raw /path/to/raw_dir --cameras /path/to/calib.yaml --write
+```
+
+随包模板默认读取标定文件中的偏移。从仓库根目录执行以下命令，用源码模板重放。若自定义 YAML 设置了 `imu_time_offset_sec`，删除该项后即可读取标定值。
+
+```bash
+ros2 launch openvins_slam slam_from_raw.launch.py \
+  config:="$(pwd)/openvins_slam/config/slam_from_bag.yaml" \
+  in_raw:=/path/to/raw_dir cameras:=/path/to/calib.yaml
+```
+
 ## RViz2 与处理速度
 
 YAML 设置 `rviz2: true` 会启动一个 RViz2 并显示轨迹、位姿、TF 和稀疏特征。跟踪图默认隐藏，需要时勾选 `Stereo feature tracks`。`record_debug` 仅控制调试数据是否写入 MCAP，不影响实时显示。

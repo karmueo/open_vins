@@ -27,10 +27,10 @@ slam_from_bag:
     record_debug: false
     # 是否启用零速度更新（ZUPT），由估计器检测静止条件后施加零速度约束。
     try_zupt: true
-    # 该数据包经轨迹精度测试选出的固定修正（秒），不是其他包的通用值。
-    # 删除此项可恢复读取 calib.yaml 的 ROS.ImuTimeOffsetSec（缺失时为 0.0）。
-    # 固定 IMU 时间修正，单位秒：计算时间 = 原始 IMU 时间 + 此值；当前提前 7 毫秒，不修改原始消息。
-    imu_time_offset_sec: -0.007
+    # 默认读取 calib.yaml 的 ROS.ImuTimeOffsetSec，缺失时为 0.0 秒。
+    # 取消注释可为 job_002.mcap 应用经轨迹精度测试选出的固定修正。
+    # 数值加到计算用的 IMU 时间戳上。示例值使计算时间提前 7 毫秒。
+    # imu_time_offset_sec: -0.007
 
     # 视觉约束：两个目标特征数均为两目合计，每目分配向下取整的一半。
     # 初始化后两目合计的目标跟踪特征数，整数且至少为 2；当前每目目标为 200 个。
